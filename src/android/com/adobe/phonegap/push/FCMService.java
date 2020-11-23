@@ -38,7 +38,6 @@ import android.util.Log;
 
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
-import com.trusted.care.local.R;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -221,7 +220,7 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
 
         NotificationCompat.Builder notificationBuilder =
                 new NotificationCompat.Builder(this, CHANNEL_VOIP)
-                        .setSmallIcon(R.drawable.pushicon)
+                        .setSmallIcon(getResources().getIdentifier("pushicon", "drawable", getPackageName()))
                         .setContentTitle("Incoming call")
                         .setContentText(caller)
                         .setPriority(NotificationCompat.PRIORITY_HIGH)

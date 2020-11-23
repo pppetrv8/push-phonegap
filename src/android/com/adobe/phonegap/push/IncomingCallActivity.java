@@ -6,12 +6,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.view.View;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.TextView;
 
-import com.trusted.care.local.R;
+import com.terry.view.swipeanimationbutton.SwipeAnimationButton;
+import com.terry.view.swipeanimationbutton.SwipeAnimationListener;
 
 public class IncomingCallActivity extends Activity {
 
@@ -24,7 +23,7 @@ public class IncomingCallActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_incoming_call);
+        setContentView(getResources().getIdentifier("activity_incoming_call", "layout", getPackageName()));
 
         instance = this;
 
@@ -35,34 +34,51 @@ public class IncomingCallActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        ((TextView) findViewById(R.id.tvCaller)).setText(getIntent().getExtras().getString("caller"));
+        ((TextView) findViewById(getResources().getIdentifier("tvCaller", "id", getPackageName()))).setText(getIntent().getExtras().getString("caller"));
 
-        ((Button) findViewById(R.id.btnAccept)).setOnClickListener(new View.OnClickListener() {
+        SwipeAnimationButton swipeAnimationButton = (SwipeAnimationButton) findViewById(getResources().getIdentifier("swipe_btn", "id", getPackageName()));
+        swipeAnimationButton.defaultDrawable = getResources().getDrawable(getResources().getIdentifier("pushicon", "drawable", getPackageName()));
+        swipeAnimationButton.slidingButton.setImageDrawable(swipeAnimationButton.defaultDrawable);
+        swipeAnimationButton.shouldAnimateExpand = false;
+        swipeAnimationButton.startShaking(1000);
+
+        swipeAnimationButton.setOnSwipeAnimationListener(new SwipeAnimationListener() {
             @Override
-            public void onClick(View view) {
-                KeyguardManager.KeyguardLock keyguardLock = ((KeyguardManager) getApplicationContext().getSystemService(Context.KEYGUARD_SERVICE)).newKeyguardLock("IncomingCall");
-                keyguardLock.disableKeyguard(); // to unlock the device
-
-                Intent acceptIntent = new Intent(IncomingCallActivity.VOIP_ACCEPT);
-                sendBroadcast(acceptIntent);
-
-                PackageManager pm = getPackageManager();
-                Intent initialActivityIntent = pm.getLaunchIntentForPackage(getApplicationContext().getPackageName());
-                initialActivityIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP); // avoid having the activity started multiple times
-                startActivity(initialActivityIntent);
-
-                finish(); // close incoming call activity
+            public void onSwiped(boolean isRight) {
+                if (isRight) {
+                    declineIncomingVoIP();
+                } else {
+                    acceptIncomingVoIP();
+                }
             }
         });
+    }
 
-        ((Button) findViewById(R.id.btnDecline)).setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                Intent declineIntent = new Intent(IncomingCallActivity.VOIP_DECLINE);
-                sendBroadcast(declineIntent);
-                finish();
-            }
-        });
+    @Override
+    public void onBackPressed() {
+        // Do nothing on back button
+    }
+
+    void acceptIncomingVoIP() {
+        KeyguardManager.KeyguardLock keyguardLock = ((KeyguardManager) getApplicationContext().getSystemService(Context.KEYGUARD_SERVICE)).newKeyguardLock("IncomingCall");
+        keyguardLock.disableKeyguard(); // to unlock the device
+
+        Intent acceptIntent = new Intent(IncomingCallActivity.VOIP_ACCEPT);
+        sendBroadcast(acceptIntent);
+
+        PackageManager pm = getPackageManager();
+        Intent initialActivityIntent = pm.getLaunchIntentForPackage(getApplicationContext().getPackageName());
+        initialActivityIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP); // avoid having the activity started multiple times
+        startActivity(initialActivityIntent);
+
+        finish(); // close incoming call activity
+    }
+
+    void declineIncomingVoIP() {
+        Intent declineIntent = new Intent(IncomingCallActivity.VOIP_DECLINE);
+        sendBroadcast(declineIntent);
+
+        finish(); // close incoming call activity
     }
 
     @Override
@@ -70,4 +86,5 @@ public class IncomingCallActivity extends Activity {
         super.onDestroy();
         instance = null;
     }
+
 }
