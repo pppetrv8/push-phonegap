@@ -229,11 +229,11 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
                         // Show main activity on lock screen or when tapping on notification
                         .setFullScreenIntent(fullScreenPendingIntent, true)
                         // Show Accept button
-                        .addAction(R.drawable.common_google_signin_btn_icon_dark_focused, "Accept",
-                                acceptPendingIntent)
+                        .addAction(new NotificationCompat.Action(0, "Accept",
+                                acceptPendingIntent))
                         // Show decline action
-                        .addAction(R.drawable.common_google_signin_btn_icon_dark_focused, "Decline",
-                                declinePendingIntent)
+                        .addAction(new NotificationCompat.Action(0, "Decline",
+                                declinePendingIntent))
                         // Make notification dismiss on user input action
                         .setAutoCancel(true)
                         // Cannot be swiped by user
