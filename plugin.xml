@@ -56,7 +56,7 @@
     <framework src="me.leolin:ShortcutBadger:1.1.17@aar"/>
     <framework src="com.google.firebase:firebase-messaging:$FCM_VERSION"/>
     <!-- Incoming Call screen animated button aar -->
-    <framework src="src/android/swipeanimationbutton.gradle" type="gradleReference"/>
+    <framework src="src/android/swipeanimationbutton.gradle" custom="true" type="gradleReference"/>
     <lib-file src="src/android/swipeanimationbutton.aar"/>
     <!-- Dependencies -->
     <dependency id="cordova-support-google-services" version="~1.3.1"/>
