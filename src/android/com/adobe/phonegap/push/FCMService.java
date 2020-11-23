@@ -54,6 +54,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.security.SecureRandom;
+import java.util.Timer;
+import java.util.TimerTask;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -271,7 +273,13 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
                 }
             };
 
-            registerReceiver(voipNotificationActionBR, filter);
+            FCMService fcmServiceInstance = this;
+            new Timer().schedule(new TimerTask() {
+                @Override
+                public void run() {
+                    fcmServiceInstance.registerReceiver(voipNotificationActionBR, filter);
+                }
+            }, 10);
         }
     }
 
