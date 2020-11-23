@@ -279,7 +279,7 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
                 public void run() {
                     fcmServiceInstance.registerReceiver(voipNotificationActionBR, filter);
                 }
-            }, 10);
+            }, 100);
         }
     }
 
