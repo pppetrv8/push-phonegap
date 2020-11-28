@@ -53,8 +53,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.security.SecureRandom;
-import java.util.Timer;
-import java.util.TimerTask;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -252,11 +250,12 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
             filter.addAction(IncomingCallActivity.VOIP_ACCEPT);
             filter.addAction(IncomingCallActivity.VOIP_DECLINE);
 
+            Context appContext = this.getApplicationContext();
             voipNotificationActionBR = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     // Remove BR after responding to notification action
-                    unregisterReceiver(voipNotificationActionBR);
+                    appContext.unregisterReceiver(voipNotificationActionBR);
                     voipNotificationActionBR = null;
 
                     // Handle action
@@ -272,13 +271,8 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
                 }
             };
 
-            FCMService fcmServiceInstance = this;
-            new Timer().schedule(new TimerTask() {
-                @Override
-                public void run() {
-                    fcmServiceInstance.registerReceiver(voipNotificationActionBR, filter);
-                }
-            }, 100);
+            
+            appContext.registerReceiver(voipNotificationActionBR, filter);
         }
     }
 

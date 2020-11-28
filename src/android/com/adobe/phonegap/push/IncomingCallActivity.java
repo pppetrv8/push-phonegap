@@ -2,15 +2,17 @@ package com.adobe.phonegap.push;
 
 import android.app.Activity;
 import android.app.KeyguardManager;
+import android.app.Notification;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.support.v4.app.NotificationCompat;
+import android.support.v4.app.NotificationManagerCompat;
 import android.view.WindowManager;
 import android.widget.TextView;
 
 import com.terry.view.swipeanimationbutton.SwipeAnimationButton;
-import com.terry.view.swipeanimationbutton.SwipeAnimationListener;
 
 public class IncomingCallActivity extends Activity {
 
@@ -18,38 +20,39 @@ public class IncomingCallActivity extends Activity {
     public static final String VOIP_ACCEPT = "pickup";
     public static final String VOIP_DECLINE = "declined_callee";
 
+    private static final int NOTIFICATION_MESSAGE_ID = 1337;
+
     public static IncomingCallActivity instance = null;
+    SwipeAnimationButton swipeAnimationButton;
+    String caller = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
         setContentView(getResources().getIdentifier("activity_incoming_call", "layout", getPackageName()));
+
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
 
         instance = this;
 
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON | WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
-        this.getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        caller = getIntent().getExtras().getString("caller");
+        ((TextView) findViewById(getResources().getIdentifier("tvCaller", "id", getPackageName()))).setText(caller);
 
-        ((TextView) findViewById(getResources().getIdentifier("tvCaller", "id", getPackageName()))).setText(getIntent().getExtras().getString("caller"));
-
-        SwipeAnimationButton swipeAnimationButton = (SwipeAnimationButton) findViewById(getResources().getIdentifier("swipe_btn", "id", getPackageName()));
+        swipeAnimationButton = findViewById(getResources().getIdentifier("swipe_btn", "id", getPackageName()));
         swipeAnimationButton.defaultDrawable = getResources().getDrawable(getResources().getIdentifier("pushicon", "drawable", getPackageName()));
         swipeAnimationButton.slidingButton.setImageDrawable(swipeAnimationButton.defaultDrawable);
         swipeAnimationButton.shouldAnimateExpand = false;
         swipeAnimationButton.startShaking(1000);
 
-        swipeAnimationButton.setOnSwipeAnimationListener(new SwipeAnimationListener() {
-            @Override
-            public void onSwiped(boolean isRight) {
-                if (isRight) {
-                    declineIncomingVoIP();
-                } else {
-                    acceptIncomingVoIP();
-                }
+        swipeAnimationButton.setOnSwipeAnimationListener(isRight -> {
+            if (isRight) {
+                declineIncomingVoIP();
+            } else {
+                requestPhoneUnlock();
             }
         });
     }
@@ -59,32 +62,82 @@ public class IncomingCallActivity extends Activity {
         // Do nothing on back button
     }
 
-    void acceptIncomingVoIP() {
-        KeyguardManager.KeyguardLock keyguardLock = ((KeyguardManager) getApplicationContext().getSystemService(Context.KEYGUARD_SERVICE)).newKeyguardLock("IncomingCall");
-        keyguardLock.disableKeyguard(); // to unlock the device
+    void requestPhoneUnlock() {
+        KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            km.requestDismissKeyguard(this, new KeyguardManager.KeyguardDismissCallback() {
+                @Override
+                public void onDismissSucceeded() {
+                    super.onDismissSucceeded();
+                    acceptIncomingVoIP();
+                }
 
+                @Override
+                public void onDismissCancelled() {
+                    super.onDismissCancelled();
+                    deviceUnlockFailed();
+                }
+
+                @Override
+                public void onDismissError() {
+                    super.onDismissError();
+                    deviceUnlockFailed();
+                }
+            });
+        } else {
+            acceptIncomingVoIP();
+            if (km.isKeyguardSecure()) {
+                showUnlockScreenNotification();
+            } else {
+                KeyguardManager.KeyguardLock myLock = km.newKeyguardLock("AnswerCall");
+                myLock.disableKeyguard();
+            }
+        }
+    }
+
+    void acceptIncomingVoIP() {
         Intent acceptIntent = new Intent(IncomingCallActivity.VOIP_ACCEPT);
         sendBroadcast(acceptIntent);
-
-        PackageManager pm = getPackageManager();
-        Intent initialActivityIntent = pm.getLaunchIntentForPackage(getApplicationContext().getPackageName());
-        initialActivityIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP); // avoid having the activity started multiple times
-        startActivity(initialActivityIntent);
-
-        finish(); // close incoming call activity
     }
 
     void declineIncomingVoIP() {
         Intent declineIntent = new Intent(IncomingCallActivity.VOIP_DECLINE);
         sendBroadcast(declineIntent);
+    }
 
-        finish(); // close incoming call activity
+    private void showUnlockScreenNotification() {
+        NotificationCompat.Builder notificationBuilder =
+                new NotificationCompat.Builder(this, PushConstants.DEFAULT_CHANNEL_ID)
+                        .setSmallIcon(getResources().getIdentifier("pushicon", "drawable", getPackageName()))
+                        .setContentTitle("Ongoing call with " + caller)
+                        .setContentText("Please unlock your device to continue")
+                        .setPriority(NotificationCompat.PRIORITY_HIGH)
+                        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                        .setAutoCancel(false)
+                        .setOngoing(true)
+                        .setStyle(new NotificationCompat.BigTextStyle())
+                        .setSound(null);
+
+        Notification ongoingCallNotification = notificationBuilder.build();
+
+        NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this.getApplicationContext());
+        // Display notification
+        notificationManager.notify(NOTIFICATION_MESSAGE_ID, ongoingCallNotification);
+    }
+
+    public static void dismissUnlockScreenNotification(Context applicationContext) {
+        NotificationManagerCompat.from(applicationContext).cancel(NOTIFICATION_MESSAGE_ID);
+    }
+
+    void deviceUnlockFailed() {
+        swipeAnimationButton.moveToCenter();
+        swipeAnimationButton.startShaking(1000);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
         instance = null;
+        swipeAnimationButton.stopShaking();
     }
-
 }
