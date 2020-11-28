@@ -47,6 +47,7 @@
     <!-- Activity used for Incoming Call -->
     <activity
       android:name="com.adobe.phonegap.push.IncomingCallActivity"
+      android:screenOrientation="portrait"
       android:theme="@android:style/Theme.Light.NoTitleBar"/>
     </config-file>
     <preference name="ANDROID_SUPPORT_V13_VERSION" default="27.+"/>
