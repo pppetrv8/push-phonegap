@@ -125,6 +125,7 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
             if ("true".equals(message.getData().get("voip"))) {
                 if ("true".equals(message.getData().get("isCancelPush"))) {
                     dismissVOIPNotification();
+                    IncomingCallActivity.dismissUnlockScreenNotification(this.getApplicationContext());
                 } else {
                     showVOIPNotification(message.getData());
                 }

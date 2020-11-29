@@ -3,12 +3,15 @@ package com.adobe.phonegap.push;
 import android.app.Activity;
 import android.app.KeyguardManager;
 import android.app.Notification;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.Build;
 import android.os.Bundle;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationManagerCompat;
+import android.util.Log;
 import android.view.WindowManager;
 import android.widget.TextView;
 
@@ -87,6 +90,12 @@ public class IncomingCallActivity extends Activity {
         } else {
             acceptIncomingVoIP();
             if (km.isKeyguardSecure()) {
+                // Register receiver for dismissing "Unlock Screen" notification
+                IncomingCallActivity.phoneUnlockBR = new PhoneUnlockBroadcastReceiver();
+                IntentFilter filter = new IntentFilter();
+                filter.addAction(Intent.ACTION_USER_PRESENT);
+                this.getApplicationContext().registerReceiver(IncomingCallActivity.phoneUnlockBR, filter);
+
                 showUnlockScreenNotification();
             } else {
                 KeyguardManager.KeyguardLock myLock = km.newKeyguardLock("AnswerCall");
@@ -125,8 +134,14 @@ public class IncomingCallActivity extends Activity {
         notificationManager.notify(NOTIFICATION_MESSAGE_ID, ongoingCallNotification);
     }
 
+    static PhoneUnlockBroadcastReceiver phoneUnlockBR;
+
     public static void dismissUnlockScreenNotification(Context applicationContext) {
         NotificationManagerCompat.from(applicationContext).cancel(NOTIFICATION_MESSAGE_ID);
+        if (IncomingCallActivity.phoneUnlockBR != null) {
+            applicationContext.unregisterReceiver(IncomingCallActivity.phoneUnlockBR);
+            IncomingCallActivity.phoneUnlockBR = null;
+        }
     }
 
     void deviceUnlockFailed() {
@@ -139,5 +154,14 @@ public class IncomingCallActivity extends Activity {
         super.onDestroy();
         instance = null;
         swipeAnimationButton.stopShaking();
+    }
+
+    public static class PhoneUnlockBroadcastReceiver extends BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent.getAction().equals(Intent.ACTION_USER_PRESENT)) {
+                IncomingCallActivity.dismissUnlockScreenNotification(context.getApplicationContext());
+            }
+        }
     }
 }

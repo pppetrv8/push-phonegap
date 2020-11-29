@@ -521,7 +521,6 @@ public class PushPlugin extends CordovaPlugin implements PushConstants {
   @Override
   public void onResume(boolean multitasking) {
     super.onResume(multitasking);
-    IncomingCallActivity.dismissUnlockScreenNotification(cordova.getActivity().getApplicationContext());
     gForeground = true;
   }
 
