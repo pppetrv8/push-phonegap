@@ -67,40 +67,44 @@ public class IncomingCallActivity extends Activity {
 
     void requestPhoneUnlock() {
         KeyguardManager km = (KeyguardManager) getSystemService(Context.KEYGUARD_SERVICE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            km.requestDismissKeyguard(this, new KeyguardManager.KeyguardDismissCallback() {
-                @Override
-                public void onDismissSucceeded() {
-                    super.onDismissSucceeded();
-                    acceptIncomingVoIP();
-                }
+        if (km.isKeyguardLocked()) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                km.requestDismissKeyguard(this, new KeyguardManager.KeyguardDismissCallback() {
+                    @Override
+                    public void onDismissSucceeded() {
+                        super.onDismissSucceeded();
+                        acceptIncomingVoIP();
+                    }
 
-                @Override
-                public void onDismissCancelled() {
-                    super.onDismissCancelled();
-                    deviceUnlockFailed();
-                }
+                    @Override
+                    public void onDismissCancelled() {
+                        super.onDismissCancelled();
+                        deviceUnlockFailed();
+                    }
 
-                @Override
-                public void onDismissError() {
-                    super.onDismissError();
-                    deviceUnlockFailed();
+                    @Override
+                    public void onDismissError() {
+                        super.onDismissError();
+                        deviceUnlockFailed();
+                    }
+                });
+            } else {
+                acceptIncomingVoIP();
+                if (km.isKeyguardSecure()) {
+                    // Register receiver for dismissing "Unlock Screen" notification
+                    IncomingCallActivity.phoneUnlockBR = new PhoneUnlockBroadcastReceiver();
+                    IntentFilter filter = new IntentFilter();
+                    filter.addAction(Intent.ACTION_USER_PRESENT);
+                    this.getApplicationContext().registerReceiver(IncomingCallActivity.phoneUnlockBR, filter);
+
+                    showUnlockScreenNotification();
+                } else {
+                    KeyguardManager.KeyguardLock myLock = km.newKeyguardLock("AnswerCall");
+                    myLock.disableKeyguard();
                 }
-            });
+            }
         } else {
             acceptIncomingVoIP();
-            if (km.isKeyguardSecure()) {
-                // Register receiver for dismissing "Unlock Screen" notification
-                IncomingCallActivity.phoneUnlockBR = new PhoneUnlockBroadcastReceiver();
-                IntentFilter filter = new IntentFilter();
-                filter.addAction(Intent.ACTION_USER_PRESENT);
-                this.getApplicationContext().registerReceiver(IncomingCallActivity.phoneUnlockBR, filter);
-
-                showUnlockScreenNotification();
-            } else {
-                KeyguardManager.KeyguardLock myLock = km.newKeyguardLock("AnswerCall");
-                myLock.disableKeyguard();
-            }
         }
     }
 
