@@ -7,15 +7,20 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.support.annotation.NonNull;
+import android.support.graphics.drawable.Animatable2Compat;
+import android.support.graphics.drawable.AnimatedVectorDrawableCompat;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationManagerCompat;
-import android.util.Log;
 import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
-
-import com.terry.view.swipeanimationbutton.SwipeAnimationButton;
 
 public class IncomingCallActivity extends Activity {
 
@@ -26,7 +31,6 @@ public class IncomingCallActivity extends Activity {
     private static final int NOTIFICATION_MESSAGE_ID = 1337;
 
     public static IncomingCallActivity instance = null;
-    SwipeAnimationButton swipeAnimationButton;
     String caller = "";
 
     @Override
@@ -37,27 +41,38 @@ public class IncomingCallActivity extends Activity {
 
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         instance = this;
 
         caller = getIntent().getExtras().getString("caller");
         ((TextView) findViewById(getResources().getIdentifier("tvCaller", "id", getPackageName()))).setText(caller);
 
-        swipeAnimationButton = findViewById(getResources().getIdentifier("swipe_btn", "id", getPackageName()));
-        swipeAnimationButton.defaultDrawable = getResources().getDrawable(getResources().getIdentifier("pushicon", "drawable", getPackageName()));
-        swipeAnimationButton.slidingButton.setImageDrawable(swipeAnimationButton.defaultDrawable);
-        swipeAnimationButton.shouldAnimateExpand = false;
-        swipeAnimationButton.startShaking(1000);
+        Button btnAccept = findViewById(R.id.btnAccept);
+        Button btnDecline = findViewById(R.id.btnDecline);
 
-        swipeAnimationButton.setOnSwipeAnimationListener(isRight -> {
-            if (isRight) {
-                declineIncomingVoIP();
-            } else {
-                requestPhoneUnlock();
+        btnAccept.setOnClickListener(v -> requestPhoneUnlock());
+        btnDecline.setOnClickListener(v -> declineIncomingVoIP());
+
+        final ImageView animatedCircle = findViewById(R.id.ivAnimatedCircle);
+        final AnimatedVectorDrawableCompat drawableCompat = AnimatedVectorDrawableCompat.create(this, R.drawable.circle_animation_avd);
+        animatedCircle.setImageDrawable(drawableCompat);
+        drawableCompat.registerAnimationCallback(new Animatable2Compat.AnimationCallback() {
+            @NonNull
+            private final Handler fHandler = new Handler(Looper.getMainLooper());
+
+            @Override
+            public void onAnimationEnd(Drawable drawable) {
+                super.onAnimationEnd(drawable);
+                if (instance != null) {
+                    fHandler.post(drawableCompat::start);
+                }
             }
         });
+
+        drawableCompat.start();
     }
 
     @Override
@@ -79,13 +94,11 @@ public class IncomingCallActivity extends Activity {
                     @Override
                     public void onDismissCancelled() {
                         super.onDismissCancelled();
-                        deviceUnlockFailed();
                     }
 
                     @Override
                     public void onDismissError() {
                         super.onDismissError();
-                        deviceUnlockFailed();
                     }
                 });
             } else {
@@ -148,16 +161,10 @@ public class IncomingCallActivity extends Activity {
         }
     }
 
-    void deviceUnlockFailed() {
-        swipeAnimationButton.moveToCenter();
-        swipeAnimationButton.startShaking(1000);
-    }
-
     @Override
     protected void onDestroy() {
         super.onDestroy();
         instance = null;
-        swipeAnimationButton.stopShaking();
     }
 
     public static class PhoneUnlockBroadcastReceiver extends BroadcastReceiver {
