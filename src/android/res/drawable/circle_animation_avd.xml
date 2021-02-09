@@ -1,0 +1,32 @@
+<vector
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="500dp"
+    android:height="500dp"
+    android:viewportWidth="500"
+    android:viewportHeight="500">
+    <group
+        android:name="Circle_t"
+        android:translateX="250"
+        android:translateY="250"
+        android:scaleX="0.59030399999999994"
+        android:scaleY="0.59030399999999994">
+        <path
+            android:name="Circle_p"
+            android:fillColor="#96b7db"
+            android:strokeWidth="1"
+            android:pathData="M0,-250C138.071,-250,250,-138.071,250,0C250,138.071,138.071,250,0,250C-138.071,250,-250,138.071,-250,0C-250,-138.071,-138.071,-250,0,-250z"/>
+    </group>
+    <group
+        android:name="ring_t"
+        android:translateX="250"
+        android:translateY="250"
+        android:scaleX="0"
+        android:scaleY="0">
+        <path
+            android:name="ring_p"
+            android:strokeColor="#96b7db"
+            android:strokeWidth="10"
+            android:pathData="M0,-250C138.071,-250,250,-138.071,250,0C250,138.071,138.071,250,0,250C-138.071,250,-250,138.071,-250,0C-250,-138.071,-138.071,-250,0,-250z"/>
+    </group>
+</vector>
