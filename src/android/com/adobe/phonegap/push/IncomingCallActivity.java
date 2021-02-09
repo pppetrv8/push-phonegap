@@ -50,14 +50,14 @@ public class IncomingCallActivity extends Activity {
         caller = getIntent().getExtras().getString("caller");
         ((TextView) findViewById(getResources().getIdentifier("tvCaller", "id", getPackageName()))).setText(caller);
 
-        Button btnAccept = findViewById(R.id.btnAccept);
-        Button btnDecline = findViewById(R.id.btnDecline);
+        Button btnAccept = findViewById(getResources().getIdentifier("btnAccept", "id", getPackageName()));
+        Button btnDecline = findViewById(getResources().getIdentifier("btnDecline", "id", getPackageName()));
 
         btnAccept.setOnClickListener(v -> requestPhoneUnlock());
         btnDecline.setOnClickListener(v -> declineIncomingVoIP());
 
-        final ImageView animatedCircle = findViewById(R.id.ivAnimatedCircle);
-        final AnimatedVectorDrawableCompat drawableCompat = AnimatedVectorDrawableCompat.create(this, R.drawable.circle_animation_avd);
+        final ImageView animatedCircle = findViewById(getResources().getIdentifier("ivAnimatedCircle", "id", getPackageName()));
+        final AnimatedVectorDrawableCompat drawableCompat = AnimatedVectorDrawableCompat.create(this, getResources().getIdentifier("circle_animation_avd", "drawable", getPackageName()));
         animatedCircle.setImageDrawable(drawableCompat);
         drawableCompat.registerAnimationCallback(new Animatable2Compat.AnimationCallback() {
             @NonNull
