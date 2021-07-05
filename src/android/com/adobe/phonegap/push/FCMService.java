@@ -200,6 +200,12 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
         String callId = messageData.get("callId");
         String callbackUrl = messageData.get("callbackUrl");
 
+        // Read the message title from messageData
+        String title = "Eingehender Anruf";
+        if (messageData.containsKey("body")) {
+            title = messageData.get("body");
+        }
+      
         // Update Webhook status to CONNECTED
         updateWebhookVOIPStatus(callbackUrl, callId, IncomingCallActivity.VOIP_CONNECTED);
 
@@ -220,7 +226,7 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
         NotificationCompat.Builder notificationBuilder =
                 new NotificationCompat.Builder(this, CHANNEL_VOIP)
                         .setSmallIcon(getResources().getIdentifier("pushicon", "drawable", getPackageName()))
-                        .setContentTitle("Incoming call")
+                        .setContentTitle(title)
                         .setContentText(caller)
                         .setPriority(NotificationCompat.PRIORITY_HIGH)
                         .setCategory(NotificationCompat.CATEGORY_CALL)
