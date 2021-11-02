@@ -17,6 +17,8 @@
   </engines>
   <platform name="android">
     <config-file target="config.xml" parent="/*">
+      <preference name="android-targetSdkVersion" value="30" />
+      <preference name="AndroidXEnabled" value="true" />
       <preference name="GradlePluginGoogleServicesEnabled" value="true" />
       <preference name="GradlePluginGoogleServicesVersion" value="4.3.8" />
     </config-file>
