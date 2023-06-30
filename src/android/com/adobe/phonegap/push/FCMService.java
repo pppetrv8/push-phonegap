@@ -213,15 +213,15 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
         Intent fullScreenIntent = new Intent(this, IncomingCallActivity.class);
         fullScreenIntent.putExtra("caller", caller);
         PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(this, 0,
-                fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+                fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
 
         // Intent for tapping on Answer
         Intent acceptIntent = new Intent(IncomingCallActivity.VOIP_ACCEPT);
-        PendingIntent acceptPendingIntent = PendingIntent.getBroadcast(this, 10, acceptIntent, 0);
+        PendingIntent acceptPendingIntent = PendingIntent.getBroadcast(this, 10, acceptIntent, PendingIntent.FLAG_IMMUTABLE);
 
         // Intent for tapping on Reject
         Intent declineIntent = new Intent(IncomingCallActivity.VOIP_DECLINE);
-        PendingIntent declinePendingIntent = PendingIntent.getBroadcast(this, 20, declineIntent, 0);
+        PendingIntent declinePendingIntent = PendingIntent.getBroadcast(this, 20, declineIntent, PendingIntent.FLAG_IMMUTABLE);
 
         NotificationCompat.Builder notificationBuilder =
                 new NotificationCompat.Builder(this, CHANNEL_VOIP)
@@ -566,7 +566,7 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
         SecureRandom random = new SecureRandom();
         int requestCode = random.nextInt();
         PendingIntent contentIntent = PendingIntent.getActivity(this, requestCode, notificationIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT);
+                PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
 
         Intent dismissedNotificationIntent = new Intent(this, PushDismissedHandler.class);
         dismissedNotificationIntent.putExtra(PUSH_BUNDLE, extras);
@@ -576,7 +576,7 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
 
         requestCode = random.nextInt();
         PendingIntent deleteIntent = PendingIntent.getBroadcast(this, requestCode, dismissedNotificationIntent,
-                PendingIntent.FLAG_CANCEL_CURRENT);
+                PendingIntent.FLAG_CANCEL_CURRENT|PendingIntent.FLAG_IMMUTABLE);
 
         NotificationCompat.Builder mBuilder = null;
 
