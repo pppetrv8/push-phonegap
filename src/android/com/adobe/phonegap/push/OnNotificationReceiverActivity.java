@@ -39,7 +39,7 @@ public class OnNotificationReceiverActivity extends Activity {
 
             Log.d(LOG_TAG, "OnNotificationReceiverActivity.handleNotification(): "+data.toString());
 
-            PushPlugin.sendMessage(data, context);
+            PushPlugin.sendExtras(data);
 
             launchIntent.putExtras(data);
             context.startActivity(launchIntent);
