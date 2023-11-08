@@ -1,50 +1,164 @@
 package com.adobe.phonegap.push
 
 import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.ContentResolver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.graphics.*
+import android.media.AudioAttributes
+import android.media.RingtoneManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.text.Spanned
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
+import androidx.core.text.HtmlCompat
+import com.adobe.phonegap.push.PushPlugin.Companion.isActive
+import com.adobe.phonegap.push.PushPlugin.Companion.isInForeground
+import com.adobe.phonegap.push.PushPlugin.Companion.sendExtras
+import com.adobe.phonegap.push.PushPlugin.Companion.setApplicationIconBadgeNumber
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.HttpUrl
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
+import java.io.IOException
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.SecureRandom
+import java.util.*
 
-@SuppressLint("NewApi")
-class FCMService : FirebaseMessagingService(), PushConstants {
-  private var voipNotificationActionBR: BroadcastReceiver? = null
-  fun setNotification(notId: Int, message: String?) {
-    var messageList: ArrayList<String?>? = messageMap.get(notId)
-    if (messageList == null) {
-      messageList = ArrayList<String>()
-      messageMap.put(notId, messageList)
+/**
+ * Firebase Cloud Messaging Service Class
+ */
+@Suppress("HardCodedStringLiteral")
+@SuppressLint("NewApi", "LongLogTag", "LogConditional")
+class FCMService : FirebaseMessagingService() {
+  companion object {
+    private const val TAG = "${PushPlugin.PREFIX_TAG} (FCMService)"
+
+    private val messageMap = HashMap<Int, ArrayList<String?>>()
+
+    private val FLAG_MUTABLE = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PendingIntent.FLAG_MUTABLE
+    } else {
+      0
     }
-    if (message!!.isEmpty()) {
+    private val FLAG_IMMUTABLE = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      PendingIntent.FLAG_IMMUTABLE
+    } else {
+      0
+    }
+
+    // VoIP
+    private const val CHANNEL_VOIP = "Voip"
+    private const val CHANNEL_NAME = "TCVoip"
+    private var voipNotificationActionBR: BroadcastReceiver? = null
+    const val VOIP_NOTIFICATION_ID = 168697
+
+    /**
+     * Get the Application Name from Label
+     */
+    fun getAppName(context: Context): String {
+      return context.packageManager.getApplicationLabel(context.applicationInfo) as String
+    }
+  }
+
+  private val context: Context
+    get() = applicationContext
+
+  private val pushSharedPref: SharedPreferences
+    get() = context.getSharedPreferences(
+      PushConstants.COM_ADOBE_PHONEGAP_PUSH,
+      MODE_PRIVATE
+    )
+
+  /**
+   * Called when a new token is generated, after app install or token changes.
+   *
+   * @param token
+   */
+  override fun onNewToken(token: String) {
+    super.onNewToken(token)
+    Log.d(TAG, "Refreshed token: $token")
+
+    // TODO: Implement this method to send any registration to your app's servers.
+    //sendRegistrationToServer(token);
+  }
+
+  /**
+   * Set Notification
+   * If message is empty or null, the message list is cleared.
+   *
+   * @param notId
+   * @param message
+   */
+  fun setNotification(notId: Int, message: String?) {
+    var messageList = messageMap[notId]
+
+    if (messageList == null) {
+      messageList = ArrayList()
+      messageMap[notId] = messageList
+    }
+
+    if (message == null || message.isEmpty()) {
       messageList.clear()
     } else {
       messageList.add(message)
     }
   }
 
-  @Override
-  fun onMessageReceived(message: RemoteMessage) {
-    val from: String = message.getFrom()
-    Log.d(LOG_TAG, "onMessage - from: $from")
+  /**
+   * On Message Received
+   */
+  override fun onMessageReceived(message: RemoteMessage) {
+    val from = message.from
+    Log.d(TAG, "onMessageReceived (from=$from)")
+
     var extras = Bundle()
-    if (message.getNotification() != null) {
-      extras.putString(PushConstants.TITLE, message.getNotification().getTitle())
-      extras.putString(PushConstants.MESSAGE, message.getNotification().getBody())
-      extras.putString(PushConstants.SOUND, message.getNotification().getSound())
-      extras.putString(PushConstants.ICON, message.getNotification().getIcon())
-      extras.putString(PushConstants.COLOR, message.getNotification().getColor())
+
+    message.notification?.let {
+      extras.putString(PushConstants.TITLE, it.title)
+      extras.putString(PushConstants.MESSAGE, it.body)
+      extras.putString(PushConstants.SOUND, it.sound)
+      extras.putString(PushConstants.ICON, it.icon)
+      extras.putString(PushConstants.COLOR, it.color)
     }
-    for (entry in message.getData().entrySet()) {
-      extras.putString(entry.getKey(), entry.getValue())
+
+    for ((key, value) in message.data) {
+      extras.putString(key, value)
     }
-    if (extras != null && isAvailableSender(from)) {
-      val applicationContext: Context = getApplicationContext()
-      val prefs: SharedPreferences = applicationContext.getSharedPreferences(PushPlugin.COM_ADOBE_PHONEGAP_PUSH,
-          Context.MODE_PRIVATE)
-      val forceShow: Boolean = prefs.getBoolean(PushConstants.FORCE_SHOW, false)
-      val clearBadge: Boolean = prefs.getBoolean(PushConstants.CLEAR_BADGE, false)
-      val messageKey: String = prefs.getString(PushConstants.MESSAGE_KEY, PushConstants.MESSAGE)
-      val titleKey: String = prefs.getString(PushConstants.TITLE_KEY, PushConstants.TITLE)
-      extras = normalizeExtras(applicationContext, extras, messageKey, titleKey)
+
+    if (isAvailableSender(from)) {
+      val messageKey = pushSharedPref.getString(PushConstants.MESSAGE_KEY, PushConstants.MESSAGE)
+      val titleKey = pushSharedPref.getString(PushConstants.TITLE_KEY, PushConstants.TITLE)
+
+      extras = normalizeExtras(extras, messageKey, titleKey)
+
+      // Clear Badge
+      val clearBadge = pushSharedPref.getBoolean(PushConstants.CLEAR_BADGE, false)
       if (clearBadge) {
-        PushPlugin.setApplicationIconBadgeNumber(getApplicationContext(), 0)
+        setApplicationIconBadgeNumber(context, 0)
       }
+
       if ("true".equals(message.getData().get("voip"))) {
         if ("true".equals(message.getData().get("isCancelPush"))) {
           dismissVOIPNotification()
@@ -53,22 +167,23 @@ class FCMService : FirebaseMessagingService(), PushConstants {
           showVOIPNotification(message.getData())
         }
       } else {
+        // Foreground
+        extras.putBoolean(PushConstants.FOREGROUND, isInForeground)
+
         // if we are in the foreground and forceShow is `false` only send data
-        if (!forceShow && PushPlugin.isInForeground()) {
-          Log.d(LOG_TAG, "foreground")
-          extras.putBoolean(PushConstants.FOREGROUND, true)
+        val forceShow = pushSharedPref.getBoolean(PushConstants.FORCE_SHOW, false)
+        if (!forceShow && isInForeground) {
+          Log.d(TAG, "Do Not Force & Is In Foreground")
           extras.putBoolean(PushConstants.COLDSTART, false)
-          PushPlugin.sendExtras(extras)
-        } else if (forceShow && PushPlugin.isInForeground()) {
-          Log.d(LOG_TAG, "foreground force")
-          extras.putBoolean(PushConstants.FOREGROUND, true)
+          sendExtras(extras)
+        } else if (forceShow && isInForeground) {
+          Log.d(TAG, "Force & Is In Foreground")
           extras.putBoolean(PushConstants.COLDSTART, false)
-          showNotificationIfPossible(applicationContext, extras)
+          showNotificationIfPossible(extras)
         } else {
-          Log.d(LOG_TAG, "background")
-          extras.putBoolean(PushConstants.FOREGROUND, false)
-          extras.putBoolean(PushConstants.COLDSTART, PushPlugin.isActive())
-          showNotificationIfPossible(applicationContext, extras)
+          Log.d(TAG, "In Background")
+          extras.putBoolean(PushConstants.COLDSTART, isActive)
+          showNotificationIfPossible(extras)
         }
       }
     }
@@ -94,9 +209,9 @@ class FCMService : FirebaseMessagingService(), PushConstants {
 
       // Set ringtone to notification (>= Android O)
       val audioAttributes: AudioAttributes = Builder()
-          .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-          .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-          .build()
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+        .build()
       channel.setSound(defaultRingtoneUri(), audioAttributes)
 
       // Register the channel with the system; you can't change the importance
@@ -130,7 +245,7 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     val fullScreenIntent = Intent(this, IncomingCallActivity::class.java)
     fullScreenIntent.putExtra("caller", caller)
     val fullScreenPendingIntent: PendingIntent = PendingIntent.getActivity(this, 0,
-        fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+      fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     // Intent for tapping on Answer
     val acceptIntent = Intent(IncomingCallActivity.VOIP_ACCEPT)
@@ -140,19 +255,19 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     val declineIntent = Intent(IncomingCallActivity.VOIP_DECLINE)
     val declinePendingIntent: PendingIntent = PendingIntent.getBroadcast(this, 20, declineIntent, PendingIntent.FLAG_IMMUTABLE)
     val notificationBuilder: NotificationCompat.Builder = Builder(this, CHANNEL_VOIP)
-        .setSmallIcon(getResources().getIdentifier("pushicon", "drawable", getPackageName()))
-        .setContentTitle(title)
-        .setContentText(caller)
-        .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setCategory(NotificationCompat.CATEGORY_CALL) // Show main activity on lock screen or when tapping on notification
-        .setFullScreenIntent(fullScreenPendingIntent, true) // Show Accept button
-        .addAction(Action(0, "Annehmen",
-            acceptPendingIntent)) // Show decline action
-        .addAction(Action(0, "Ablehnen",
-            declinePendingIntent)) // Make notification dismiss on user input action
-        .setAutoCancel(true) // Cannot be swiped by user
-        .setOngoing(true) // Set ringtone to notification (< Android O)
-        .setSound(defaultRingtoneUri())
+      .setSmallIcon(getResources().getIdentifier("pushicon", "drawable", getPackageName()))
+      .setContentTitle(title)
+      .setContentText(caller)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .setCategory(NotificationCompat.CATEGORY_CALL) // Show main activity on lock screen or when tapping on notification
+      .setFullScreenIntent(fullScreenPendingIntent, true) // Show Accept button
+      .addAction(Action(0, "Annehmen",
+        acceptPendingIntent)) // Show decline action
+      .addAction(Action(0, "Ablehnen",
+        declinePendingIntent)) // Make notification dismiss on user input action
+      .setAutoCancel(true) // Cannot be swiped by user
+      .setOngoing(true) // Set ringtone to notification (< Android O)
+      .setSound(defaultRingtoneUri())
     val incomingCallNotification: Notification = notificationBuilder.build()
     val notificationManager: NotificationManagerCompat = NotificationManagerCompat.from(this)
     // Display notification
@@ -203,157 +318,226 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     val urlBuilt: String = urlBuilder.build().toString()
     val request: Request = Builder().url(urlBuilt).build()
     client.newCall(request)
-        .enqueue(object : Callback() {
-          @Override
-          fun onFailure(call: Call?, e: IOException?) {
-            Log.d(LOG_TAG, "Update For CallId $callId and Status $status failed")
-          }
+      .enqueue(object : Callback() {
+        @Override
+        fun onFailure(call: Call?, e: IOException?) {
+          Log.d(LOG_TAG, "Update For CallId $callId and Status $status failed")
+        }
 
-          @Override
-          fun onResponse(call: Call?, response: Response?) {
-            Log.d(LOG_TAG, "Update For CallId $callId and Status $status successful")
-          }
-        })
+        @Override
+        fun onResponse(call: Call?, response: Response?) {
+          Log.d(LOG_TAG, "Update For CallId $callId and Status $status successful")
+        }
+      })
   }
 
   // END of VoIP implementation
-  /*
-   * Change a values key in the extras bundle
-   */
-  private fun replaceKey(context: Context, oldKey: String, newKey: String, extras: Bundle, newExtras: Bundle) {
-    var value: Object = extras.get(oldKey)
+
+  private fun replaceKey(oldKey: String, newKey: String, extras: Bundle, newExtras: Bundle) {
+    /*
+     * Change a values key in the extras bundle
+     */
+    var value = extras[oldKey]
     if (value != null) {
-      if (value is String) {
-        value = localizeKey(context, newKey, value as String)
-        newExtras.putString(newKey, value as String)
-      } else if (value is Boolean) {
-        newExtras.putBoolean(newKey, value as Boolean)
-      } else if (value is Number) {
-        newExtras.putDouble(newKey, (value as Number).doubleValue())
-      } else {
-        newExtras.putString(newKey, String.valueOf(value))
+      when (value) {
+        is String -> {
+          value = localizeKey(newKey, value)
+          newExtras.putString(newKey, value as String?)
+        }
+
+        is Boolean -> newExtras.putBoolean(newKey, (value as Boolean?) ?: return)
+
+        is Number -> {
+          newExtras.putDouble(newKey, value.toDouble())
+        }
+
+        else -> {
+          newExtras.putString(newKey, value.toString())
+        }
       }
     }
   }
 
-  /*
-   * Normalize localization for key
-   */
-  private fun localizeKey(context: Context, key: String, value: String): String {
-    return if (key.equals(PushConstants.TITLE) || key.equals(PushConstants.MESSAGE) || key.equals(PushConstants.SUMMARY_TEXT)) {
-      try {
-        val localeObject = JSONObject(value)
-        val localeKey: String = localeObject.getString(PushConstants.LOC_KEY)
-        val localeFormatData: ArrayList<String> = ArrayList<String>()
-        if (!localeObject.isNull(PushConstants.LOC_DATA)) {
-          val localeData: String = localeObject.getString(PushConstants.LOC_DATA)
-          val localeDataArray = JSONArray(localeData)
-          for (i in 0 until localeDataArray.length()) {
-            localeFormatData.add(localeDataArray.getString(i))
+  private fun localizeKey(key: String, value: String): String {
+    /*
+     * Normalize localization for key
+     */
+    return when (key) {
+      PushConstants.TITLE,
+      PushConstants.MESSAGE,
+      PushConstants.SUMMARY_TEXT,
+      -> {
+        try {
+          val localeObject = JSONObject(value)
+          val localeKey = localeObject.getString(PushConstants.LOC_KEY)
+          val localeFormatData = ArrayList<String>()
+
+          if (!localeObject.isNull(PushConstants.LOC_DATA)) {
+            val localeData = localeObject.getString(PushConstants.LOC_DATA)
+            val localeDataArray = JSONArray(localeData)
+
+            for (i in 0 until localeDataArray.length()) {
+              localeFormatData.add(localeDataArray.getString(i))
+            }
           }
-        }
-        val packageName: String = context.getPackageName()
-        val resources: Resources = context.getResources()
-        val resourceId: Int = resources.getIdentifier(localeKey, "string", packageName)
-        if (resourceId != 0) {
-          resources.getString(resourceId, localeFormatData.toArray())
-        } else {
-          Log.d(LOG_TAG, "can't find resource for locale key = $localeKey")
+
+          val resourceId = context.resources.getIdentifier(
+            localeKey,
+            "string",
+            context.packageName
+          )
+
+          if (resourceId != 0) {
+            context.resources.getString(resourceId, *localeFormatData.toTypedArray())
+          } else {
+            Log.d(TAG, "Can't Find Locale Resource (key=$localeKey)")
+            value
+          }
+        } catch (e: JSONException) {
+          Log.d(TAG, "No Locale Found (key= $key, error=${e.message})")
           value
         }
-      } catch (e: JSONException) {
-        Log.d(LOG_TAG, "no locale found for key = " + key + ", error " + e.getMessage())
-        value
       }
-    } else value
-  }
-
-  /*
-   * Replace alternate keys with our canonical value
-   */
-  private fun normalizeKey(key: String, messageKey: String, titleKey: String, newExtras: Bundle): String {
-    var key = key
-    return if (key.equals(PushConstants.BODY) || key.equals(PushConstants.ALERT) || key.equals(PushConstants.MP_MESSAGE) || key.equals(PushConstants.GCM_NOTIFICATION_BODY)
-        || key.equals(PushConstants.TWILIO_BODY) || key.equals(messageKey) || key.equals(PushConstants.AWS_PINPOINT_BODY)) {
-      PushConstants.MESSAGE
-    } else if (key.equals(PushConstants.TWILIO_TITLE) || key.equals(PushConstants.SUBJECT) || key.equals(titleKey)) {
-      PushConstants.TITLE
-    } else if (key.equals(PushConstants.MSGCNT) || key.equals(PushConstants.BADGE)) {
-      PushConstants.COUNT
-    } else if (key.equals(PushConstants.SOUNDNAME) || key.equals(PushConstants.TWILIO_SOUND)) {
-      PushConstants.SOUND
-    } else if (key.equals(PushConstants.AWS_PINPOINT_PICTURE)) {
-      newExtras.putString(PushConstants.STYLE, PushConstants.STYLE_PICTURE)
-      PushConstants.PICTURE
-    } else if (key.startsWith(PushConstants.GCM_NOTIFICATION)) {
-      key.substring(PushConstants.GCM_NOTIFICATION.length() + 1, key.length())
-    } else if (key.startsWith(PushConstants.GCM_N)) {
-      key.substring(PushConstants.GCM_N.length() + 1, key.length())
-    } else if (key.startsWith(PushConstants.UA_PREFIX)) {
-      key = key.substring(PushConstants.UA_PREFIX.length() + 1, key.length())
-      key.toLowerCase()
-    } else if (key.startsWith(PushConstants.AWS_PINPOINT_PREFIX)) {
-      key.substring(PushConstants.AWS_PINPOINT_PREFIX.length() + 1, key.length())
-    } else {
-      key
+      else -> value
     }
   }
 
-  /*
-   * Parse bundle into normalized keys.
-   */
-  private fun normalizeExtras(context: Context, extras: Bundle, messageKey: String, titleKey: String): Bundle {
-    Log.d(LOG_TAG, "normalize extras")
+  private fun normalizeKey(
+    key: String,
+    messageKey: String?,
+    titleKey: String?,
+    newExtras: Bundle,
+  ): String {
+    /*
+     * Replace alternate keys with our canonical value
+     */
+    return when {
+      key == PushConstants.BODY
+        || key == PushConstants.ALERT
+        || key == PushConstants.MP_MESSAGE
+        || key == PushConstants.GCM_NOTIFICATION_BODY
+        || key == PushConstants.TWILIO_BODY
+        || key == messageKey
+        || key == PushConstants.AWS_PINPOINT_BODY
+      -> {
+        PushConstants.MESSAGE
+      }
+
+      key == PushConstants.TWILIO_TITLE || key == PushConstants.SUBJECT || key == titleKey -> {
+        PushConstants.TITLE
+      }
+
+      key == PushConstants.MSGCNT || key == PushConstants.BADGE -> {
+        PushConstants.COUNT
+      }
+
+      key == PushConstants.SOUNDNAME || key == PushConstants.TWILIO_SOUND -> {
+        PushConstants.SOUND
+      }
+
+      key == PushConstants.AWS_PINPOINT_PICTURE -> {
+        newExtras.putString(PushConstants.STYLE, PushConstants.STYLE_PICTURE)
+        PushConstants.PICTURE
+      }
+
+      key.startsWith(PushConstants.GCM_NOTIFICATION) -> {
+        key.substring(PushConstants.GCM_NOTIFICATION.length + 1, key.length)
+      }
+
+      key.startsWith(PushConstants.GCM_N) -> {
+        key.substring(PushConstants.GCM_N.length + 1, key.length)
+      }
+
+      key.startsWith(PushConstants.UA_PREFIX) -> {
+        key.substring(PushConstants.UA_PREFIX.length + 1, key.length).lowercase()
+      }
+
+      key.startsWith(PushConstants.AWS_PINPOINT_PREFIX) -> {
+        key.substring(PushConstants.AWS_PINPOINT_PREFIX.length + 1, key.length)
+      }
+
+      else -> key
+    }
+  }
+
+  private fun normalizeExtras(
+    extras: Bundle,
+    messageKey: String?,
+    titleKey: String?,
+  ): Bundle {
+    /*
+     * Parse bundle into normalized keys.
+     */
+    Log.d(TAG, "normalize extras")
+
     val it: Iterator<String> = extras.keySet().iterator()
     val newExtras = Bundle()
+
     while (it.hasNext()) {
       val key = it.next()
-      Log.d(LOG_TAG, "key = $key")
+      Log.d(TAG, "key = $key")
 
-      // If normalizeKeythe key is "data" or "message" and the value is a json object extract
+      // If normalizeKey, the key is "data" or "message" and the value is a json object extract
       // This is to support parse.com and other services. Issue #147 and pull #218
-      if (key.equals(PushConstants.PARSE_COM_DATA) || key.equals(PushConstants.MESSAGE) || key.equals(messageKey)) {
-        val json: Object = extras.get(key)
-        // Make sure data is json object stringified
-        if (json is String && (json as String).startsWith("{")) {
-          Log.d(LOG_TAG, "extracting nested message data from key = $key")
+      if (
+        key == PushConstants.PARSE_COM_DATA ||
+        key == PushConstants.MESSAGE ||
+        key == messageKey
+      ) {
+        val json = extras[key]
+
+        // Make sure data is in json object string format
+        if (json is String && json.startsWith("{")) {
+          Log.d(TAG, "extracting nested message data from key = $key")
+
           try {
             // If object contains message keys promote each value to the root of the bundle
-            val data = JSONObject(json as String)
-            if (data.has(PushConstants.ALERT) || data.has(PushConstants.MESSAGE) || data.has(PushConstants.BODY) || data.has(PushConstants.TITLE) || data.has(messageKey)
-                || data.has(titleKey)) {
-              val jsonIter: Iterator<String> = data.keys()
-              while (jsonIter.hasNext()) {
-                var jsonKey = jsonIter.next()
-                Log.d(LOG_TAG, "key = data/$jsonKey")
-                var value: String = data.getString(jsonKey)
+            val data = JSONObject(json)
+            if (
+              data.has(PushConstants.ALERT)
+              || data.has(PushConstants.MESSAGE)
+              || data.has(PushConstants.BODY)
+              || data.has(PushConstants.TITLE)
+              || data.has(messageKey)
+              || data.has(titleKey)
+            ) {
+              val jsonKeys = data.keys()
+
+              while (jsonKeys.hasNext()) {
+                var jsonKey = jsonKeys.next()
+                Log.d(TAG, "key = data/$jsonKey")
+
+                var value = data.getString(jsonKey)
                 jsonKey = normalizeKey(jsonKey, messageKey, titleKey, newExtras)
-                value = localizeKey(context, jsonKey, value)
+                value = localizeKey(jsonKey, value)
                 newExtras.putString(jsonKey, value)
               }
             } else if (data.has(PushConstants.LOC_KEY) || data.has(PushConstants.LOC_DATA)) {
               val newKey = normalizeKey(key, messageKey, titleKey, newExtras)
-              Log.d(LOG_TAG, "replace key $key with $newKey")
-              replaceKey(context, key, newKey, extras, newExtras)
+              Log.d(TAG, "replace key $key with $newKey")
+              replaceKey(key, newKey, extras, newExtras)
             }
           } catch (e: JSONException) {
-            Log.e(LOG_TAG, "normalizeExtras: JSON exception")
+            Log.e(TAG, "normalizeExtras: JSON exception")
           }
         } else {
           val newKey = normalizeKey(key, messageKey, titleKey, newExtras)
-          Log.d(LOG_TAG, "replace key $key with $newKey")
-          replaceKey(context, key, newKey, extras, newExtras)
+          Log.d(TAG, "replace key $key with $newKey")
+          replaceKey(key, newKey, extras, newExtras)
         }
-      } else if (key.equals("notification")) {
-        val value: Bundle = extras.getBundle(key)
-        val iterator: Iterator<String> = value.keySet().iterator()
+      } else if (key == "notification") {
+        val value = extras.getBundle(key)
+        val iterator: Iterator<String> = value!!.keySet().iterator()
+
         while (iterator.hasNext()) {
-          val notifkey = iterator.next()
-          Log.d(LOG_TAG, "notifkey = $notifkey")
-          val newKey = normalizeKey(notifkey, messageKey, titleKey, newExtras)
-          Log.d(LOG_TAG, "replace key $notifkey with $newKey")
-          var valueData: String = value.getString(notifkey)
-          valueData = localizeKey(context, newKey, valueData)
+          val notificationKey = iterator.next()
+          Log.d(TAG, "notificationKey = $notificationKey")
+
+          val newKey = normalizeKey(notificationKey, messageKey, titleKey, newExtras)
+          Log.d(TAG, "Replace key $notificationKey with $newKey")
+
+          var valueData = value.getString(notificationKey)
+          valueData = localizeKey(newKey, valueData!!)
           newExtras.putString(newKey, valueData)
         }
         continue
@@ -364,8 +548,8 @@ class FCMService : FirebaseMessagingService(), PushConstants {
         // See issue #1663
       } else {
         val newKey = normalizeKey(key, messageKey, titleKey, newExtras)
-        Log.d(LOG_TAG, "replace key $key with $newKey")
-        replaceKey(context, key, newKey, extras, newExtras)
+        Log.d(TAG, "replace key $key with $newKey")
+        replaceKey(key, newKey, extras, newExtras)
       }
     } // while
     return newExtras
@@ -373,125 +557,146 @@ class FCMService : FirebaseMessagingService(), PushConstants {
 
   private fun extractBadgeCount(extras: Bundle?): Int {
     var count = -1
-    val msgcnt: String = extras.getString(PushConstants.COUNT)
+
     try {
-      if (msgcnt != null) {
-        count = Integer.parseInt(msgcnt)
+      extras?.getString(PushConstants.COUNT)?.let {
+        count = it.toInt()
       }
     } catch (e: NumberFormatException) {
-      Log.e(LOG_TAG, e.getLocalizedMessage(), e)
+      Log.e(TAG, e.localizedMessage, e)
     }
+
     return count
   }
 
-  private fun showNotificationIfPossible(context: Context, extras: Bundle?) {
-
+  private fun showNotificationIfPossible(extras: Bundle?) {
     // Send a notification if there is a message or title, otherwise just send data
-    val message: String = extras.getString(PushConstants.MESSAGE)
-    val title: String = extras.getString(PushConstants.TITLE)
-    val contentAvailable: String = extras.getString(PushConstants.CONTENT_AVAILABLE)
-    val forceStart: String = extras.getString(PushConstants.FORCE_START)
-    val badgeCount = extractBadgeCount(extras)
-    if (badgeCount >= 0) {
-      Log.d(LOG_TAG, "count =[$badgeCount]")
-      PushPlugin.setApplicationIconBadgeNumber(context, badgeCount)
-    }
-    if (badgeCount == 0) {
-      val mNotificationManager: NotificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-      mNotificationManager.cancelAll()
-    }
-    Log.d(LOG_TAG, "message =[$message]")
-    Log.d(LOG_TAG, "title =[$title]")
-    Log.d(LOG_TAG, "contentAvailable =[$contentAvailable]")
-    Log.d(LOG_TAG, "forceStart =[$forceStart]")
-    if (message != null && message.length() !== 0 || title != null && title.length() !== 0) {
-      Log.d(LOG_TAG, "create notification")
-      if (title == null || title.isEmpty()) {
-        extras.putString(PushConstants.TITLE, getAppName(this))
+    extras?.let {
+      val message = it.getString(PushConstants.MESSAGE)
+      val title = it.getString(PushConstants.TITLE)
+      val contentAvailable = it.getString(PushConstants.CONTENT_AVAILABLE)
+      val forceStart = it.getString(PushConstants.FORCE_START)
+      val badgeCount = extractBadgeCount(extras)
+
+      if (badgeCount >= 0) {
+        setApplicationIconBadgeNumber(context, badgeCount)
       }
-      createNotification(context, extras)
-    }
-    if (!PushPlugin.isActive() && "1".equals(forceStart)) {
-      Log.d(LOG_TAG, "app is not running but we should start it and put in background")
-      val intent = Intent(this, PushHandlerActivity::class.java)
-      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      intent.putExtra(PushConstants.PUSH_BUNDLE, extras)
-      intent.putExtra(PushConstants.START_IN_BACKGROUND, true)
-      intent.putExtra(PushConstants.FOREGROUND, false)
-      startActivity(intent)
-    } else if ("1".equals(contentAvailable)) {
-      Log.d(LOG_TAG, "app is not running and content available true")
-      Log.d(LOG_TAG, "send notification event")
-      PushPlugin.sendExtras(extras)
+
+      if (badgeCount == 0) {
+        val mNotificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        mNotificationManager.cancelAll()
+      }
+
+      Log.d(TAG, "message=$message")
+      Log.d(TAG, "title=$title")
+      Log.d(TAG, "contentAvailable=$contentAvailable")
+      Log.d(TAG, "forceStart=$forceStart")
+      Log.d(TAG, "badgeCount=$badgeCount")
+
+      val hasMessage = message != null && message.isNotEmpty()
+      val hasTitle = title != null && title.isNotEmpty()
+
+      if (hasMessage || hasTitle) {
+        Log.d(TAG, "Create Notification")
+
+        if (!hasTitle) {
+          extras.putString(PushConstants.TITLE, getAppName(this))
+        }
+
+        createNotification(extras)
+      }
+
+      if (!isActive && forceStart == "1") {
+        Log.d(TAG, "The app is not running, attempting to start in the background")
+
+        val intent = Intent(this, PushHandlerActivity::class.java).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          putExtra(PushConstants.PUSH_BUNDLE, extras)
+          putExtra(PushConstants.START_IN_BACKGROUND, true)
+          putExtra(PushConstants.FOREGROUND, false)
+        }
+
+        startActivity(intent)
+      } else if (contentAvailable == "1") {
+        Log.d(
+          TAG,
+          "The app is not running and content available is true, sending notification event"
+        )
+
+        sendExtras(extras)
+      }
     }
   }
 
-  fun createNotification(context: Context, extras: Bundle?) {
-    val mNotificationManager: NotificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+  private fun createNotification(extras: Bundle?) {
+    val mNotificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
     val appName = getAppName(this)
-    val packageName: String = context.getPackageName()
-    val resources: Resources = context.getResources()
-    val notId = parseInt(PushConstants.NOT_ID, extras)
-    val notificationIntent = Intent(this, PushHandlerActivity::class.java)
-    notificationIntent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-    notificationIntent.putExtra(PushConstants.PUSH_BUNDLE, extras)
-    notificationIntent.putExtra(PushConstants.NOT_ID, notId)
-    val random = SecureRandom()
-    var requestCode: Int = random.nextInt()
-    val contentIntent: PendingIntent = PendingIntent.getActivity(this, requestCode, notificationIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    val dismissedNotificationIntent = Intent(this, PushDismissedHandler::class.java)
-    dismissedNotificationIntent.putExtra(PushConstants.PUSH_BUNDLE, extras)
-    dismissedNotificationIntent.putExtra(PushConstants.NOT_ID, notId)
-    dismissedNotificationIntent.putExtra(PushConstants.DISMISSED, true)
-    dismissedNotificationIntent.setAction(PushConstants.PUSH_DISMISSED)
-    requestCode = random.nextInt()
-    val deleteIntent: PendingIntent = PendingIntent.getBroadcast(this, requestCode, dismissedNotificationIntent,
-        PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    var mBuilder: NotificationCompat.Builder? = null
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      var channelID: String = extras.getString(PushConstants.ANDROID_CHANNEL_ID)
-
-      // if the push payload specifies a channel use it
-      if (channelID != null) {
-        mBuilder = Builder(context, channelID)
-      } else {
-        val channels: List<NotificationChannel> = mNotificationManager.getNotificationChannels()
-        channelID = if (channels.size() === 1) {
-          channels[0].getId()
-        } else {
-          extras.getString(PushConstants.ANDROID_CHANNEL_ID, PushConstants.DEFAULT_CHANNEL_ID)
-        }
-        Log.d(LOG_TAG, "Using channel ID = $channelID")
-        mBuilder = Builder(context, channelID)
-      }
-    } else {
-      mBuilder = Builder(context)
+    val notId = parseNotificationIdToInt(extras)
+    val notificationIntent = Intent(this, PushHandlerActivity::class.java).apply {
+      addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      putExtra(PushConstants.PUSH_BUNDLE, extras)
+      putExtra(PushConstants.NOT_ID, notId)
     }
-    mBuilder.setWhen(System.currentTimeMillis()).setContentTitle(fromHtml(extras.getString(PushConstants.TITLE)))
-        .setTicker(fromHtml(extras.getString(PushConstants.TITLE))).setContentIntent(contentIntent).setDeleteIntent(deleteIntent)
-        .setAutoCancel(true)
-    val prefs: SharedPreferences = context.getSharedPreferences(PushPlugin.COM_ADOBE_PHONEGAP_PUSH, Context.MODE_PRIVATE)
-    val localIcon: String = prefs.getString(PushConstants.ICON, null)
-    val localIconColor: String = prefs.getString(PushConstants.ICON_COLOR, null)
-    val soundOption: Boolean = prefs.getBoolean(PushConstants.SOUND, true)
-    val vibrateOption: Boolean = prefs.getBoolean(PushConstants.VIBRATE, true)
-    Log.d(LOG_TAG, "stored icon=$localIcon")
-    Log.d(LOG_TAG, "stored iconColor=$localIconColor")
-    Log.d(LOG_TAG, "stored sound=$soundOption")
-    Log.d(LOG_TAG, "stored vibrate=$vibrateOption")
+    val random = SecureRandom()
+    var requestCode = random.nextInt()
+    val contentIntent = PendingIntent.getActivity(
+      this,
+      requestCode,
+      notificationIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or FLAG_IMMUTABLE
+    )
+    val dismissedNotificationIntent = Intent(
+      this,
+      PushDismissedHandler::class.java
+    ).apply {
+      putExtra(PushConstants.PUSH_BUNDLE, extras)
+      putExtra(PushConstants.NOT_ID, notId)
+      putExtra(PushConstants.DISMISSED, true)
+
+      action = PushConstants.PUSH_DISMISSED
+    }
+
+    requestCode = random.nextInt()
+
+    val deleteIntent = PendingIntent.getBroadcast(
+      this,
+      requestCode,
+      dismissedNotificationIntent,
+      PendingIntent.FLAG_CANCEL_CURRENT or FLAG_IMMUTABLE
+    )
+
+    val mBuilder: NotificationCompat.Builder =
+      createNotificationBuilder(extras, mNotificationManager)
+
+    mBuilder.setWhen(System.currentTimeMillis())
+      .setContentTitle(fromHtml(extras?.getString(PushConstants.TITLE)))
+      .setTicker(fromHtml(extras?.getString(PushConstants.TITLE)))
+      .setContentIntent(contentIntent)
+      .setDeleteIntent(deleteIntent)
+      .setAutoCancel(true)
+
+    val localIcon = pushSharedPref.getString(PushConstants.ICON, null)
+    val localIconColor = pushSharedPref.getString(PushConstants.ICON_COLOR, null)
+    val soundOption = pushSharedPref.getBoolean(PushConstants.SOUND, true)
+    val vibrateOption = pushSharedPref.getBoolean(PushConstants.VIBRATE, true)
+
+    Log.d(TAG, "stored icon=$localIcon")
+    Log.d(TAG, "stored iconColor=$localIconColor")
+    Log.d(TAG, "stored sound=$soundOption")
+    Log.d(TAG, "stored vibrate=$vibrateOption")
 
     /*
      * Notification Vibration
-     */setNotificationVibration(extras, vibrateOption, mBuilder)
+     */
+    setNotificationVibration(extras, vibrateOption, mBuilder)
 
     /*
      * Notification Icon Color
      *
      * Sets the small-icon background color of the notification.
      * To use, add the `iconColor` key to plugin android options
-     *
-     */setNotificationIconColor(extras.getString(PushConstants.COLOR), mBuilder, localIconColor)
+     */
+    setNotificationIconColor(extras?.getString(PushConstants.COLOR), mBuilder, localIconColor)
 
     /*
      * Notification Icon
@@ -503,8 +708,8 @@ class FCMService : FirebaseMessagingService(), PushConstants {
      *
      * The icon value must be a string that maps to a drawable resource.
      * If no resource is found, falls
-     *
-     */setNotificationSmallIcon(context, extras, packageName, resources, mBuilder, localIcon)
+     */
+    setNotificationSmallIcon(extras, mBuilder, localIcon)
 
     /*
      * Notification Large-Icon
@@ -516,132 +721,241 @@ class FCMService : FirebaseMessagingService(), PushConstants {
      * - checks to see if assets image, Loads It.
      * - checks to see if resource image, LOADS IT!
      * - if none, we don't set the large icon
-     *
-     */setNotificationLargeIcon(extras, packageName, resources, mBuilder)
+     */
+    setNotificationLargeIcon(extras, mBuilder)
 
     /*
      * Notification Sound
-     */if (soundOption) {
-      setNotificationSound(context, extras, mBuilder)
+     */
+    if (soundOption) {
+      setNotificationSound(extras, mBuilder)
     }
 
     /*
      *  LED Notification
-     */setNotificationLedColor(extras, mBuilder)
+     */
+    setNotificationLedColor(extras, mBuilder)
 
     /*
      *  Priority Notification
-     */setNotificationPriority(extras, mBuilder)
+     */
+    setNotificationPriority(extras, mBuilder)
 
     /*
      * Notification message
-     */setNotificationMessage(notId, extras, mBuilder)
+     */
+    setNotificationMessage(notId, extras, mBuilder)
 
     /*
      * Notification count
-     */setNotificationCount(context, extras, mBuilder)
+     */
+    setNotificationCount(extras, mBuilder)
 
     /*
      *  Notification ongoing
-     */setNotificationOngoing(extras, mBuilder)
+     */
+    setNotificationOngoing(extras, mBuilder)
 
     /*
      * Notification count
-     */setVisibility(context, extras, mBuilder)
+     */
+    setVisibility(extras, mBuilder)
 
     /*
      * Notification add actions
-     */createActions(extras, mBuilder, resources, packageName, notId)
+     */
+    createActions(extras, mBuilder, notId)
     mNotificationManager.notify(appName, notId, mBuilder.build())
   }
 
-  private fun updateIntent(intent: Intent?, callback: String, extras: Bundle?, foreground: Boolean, notId: Int) {
-    intent.putExtra(PushConstants.CALLBACK, callback)
-    intent.putExtra(PushConstants.PUSH_BUNDLE, extras)
-    intent.putExtra(PushConstants.FOREGROUND, foreground)
-    intent.putExtra(PushConstants.NOT_ID, notId)
+  private fun createNotificationBuilder(
+    extras: Bundle?,
+    notificationManager: NotificationManager
+  ): NotificationCompat.Builder {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      var channelID: String? = null
+
+      if (extras != null) {
+        channelID = extras.getString(PushConstants.ANDROID_CHANNEL_ID)
+      }
+
+      // if the push payload specifies a channel use it
+      return if (channelID != null) {
+        NotificationCompat.Builder(context, channelID)
+      } else {
+        val channels = notificationManager.notificationChannels
+
+        channelID = if (channels.size == 1) {
+          channels[0].id.toString()
+        } else {
+          PushConstants.DEFAULT_CHANNEL_ID
+        }
+
+        Log.d(TAG, "Using channel ID = $channelID")
+        NotificationCompat.Builder(context, channelID)
+      }
+    } else {
+      return NotificationCompat.Builder(context)
+    }
   }
 
-  private fun createActions(extras: Bundle?, mBuilder: NotificationCompat.Builder?, resources: Resources,
-                packageName: String, notId: Int) {
-    Log.d(LOG_TAG, "create actions: with in-line")
-    val actions: String = extras.getString(PushConstants.ACTIONS)
+  private fun updateIntent(
+    intent: Intent,
+    callback: String,
+    extras: Bundle?,
+    foreground: Boolean,
+    notId: Int,
+  ) {
+    intent.apply {
+      putExtra(PushConstants.CALLBACK, callback)
+      putExtra(PushConstants.PUSH_BUNDLE, extras)
+      putExtra(PushConstants.FOREGROUND, foreground)
+      putExtra(PushConstants.NOT_ID, notId)
+    }
+  }
+
+  private fun createActions(
+    extras: Bundle?,
+    mBuilder: NotificationCompat.Builder,
+    notId: Int,
+  ) {
+    Log.d(TAG, "create actions: with in-line")
+
+    if (extras == null) {
+      Log.d(TAG, "create actions: extras is null, skipping")
+      return
+    }
+
+    val actions = extras.getString(PushConstants.ACTIONS)
     if (actions != null) {
       try {
         val actionsArray = JSONArray(actions)
-        val wActions: ArrayList<NotificationCompat.Action> = ArrayList<NotificationCompat.Action>()
+        val wActions = ArrayList<NotificationCompat.Action>()
+
         for (i in 0 until actionsArray.length()) {
           val min = 1
           val max = 2000000000
           val random = SecureRandom()
-          val uniquePendingIntentRequestCode: Int = random.nextInt(max - min + 1) + min
-          Log.d(LOG_TAG, "adding action")
-          val action: JSONObject = actionsArray.getJSONObject(i)
-          Log.d(LOG_TAG, "adding callback = " + action.getString(PushConstants.CALLBACK))
-          val foreground: Boolean = action.optBoolean(PushConstants.FOREGROUND, true)
-          val inline: Boolean = action.optBoolean("inline", false)
-          var intent: Intent? = null
-          var pIntent: PendingIntent? = null
-          if (inline) {
-            Log.d(LOG_TAG, "Version: " + android.os.Build.VERSION.SDK_INT + " = " + android.os.Build.VERSION_CODES.M)
-            if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.M) {
-              Log.d(LOG_TAG, "push activity")
-              intent = Intent(this, PushHandlerActivity::class.java)
-            } else {
-              Log.d(LOG_TAG, "push receiver")
-              intent = Intent(this, BackgroundActionButtonHandler::class.java)
-            }
-            updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
-            pIntent = if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.M) {
-              Log.d(LOG_TAG, "push activity for notId $notId")
-              PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent,
-                  PendingIntent.FLAG_ONE_SHOT)
-            } else {
-              Log.d(LOG_TAG, "push receiver for notId $notId")
-              PendingIntent.getBroadcast(this, uniquePendingIntentRequestCode, intent,
-                  PendingIntent.FLAG_ONE_SHOT)
-            }
-          } else if (foreground) {
-            intent = Intent(this, PushHandlerActivity::class.java)
-            updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
-            pIntent = PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent,
-                PendingIntent.FLAG_UPDATE_CURRENT)
-          } else {
+          val uniquePendingIntentRequestCode = random.nextInt(max - min + 1) + min
 
-            // Only add on platform levels that support FLAG_MUTABLE
-            val flag: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE else PendingIntent.FLAG_UPDATE_CURRENT
-            if (getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S &&
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-              intent = Intent(this, OnNotificationReceiverActivity::class.java)
-              updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
-              pIntent = PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent, flag)
-            } else {
+          Log.d(TAG, "adding action")
+
+          val action = actionsArray.getJSONObject(i)
+
+          Log.d(TAG, "adding callback = " + action.getString(PushConstants.CALLBACK))
+
+          val foreground = action.optBoolean(PushConstants.FOREGROUND, true)
+          val inline = action.optBoolean("inline", false)
+          var intent: Intent?
+          var pIntent: PendingIntent?
+          val callback = action.getString(PushConstants.CALLBACK)
+
+          when {
+            inline -> {
+              Log.d(TAG, "Version: ${Build.VERSION.SDK_INT} = ${Build.VERSION_CODES.M}")
+
+              intent = if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+                Log.d(TAG, "Push Activity")
+                Intent(this, PushHandlerActivity::class.java)
+              } else {
+                Log.d(TAG, "Push Receiver")
+                Intent(this, BackgroundActionButtonHandler::class.java)
+              }
+
+              updateIntent(intent, callback, extras, foreground, notId)
+
+              pIntent = if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M) {
+                Log.d(TAG, "push activity for notId $notId")
+
+                PendingIntent.getActivity(
+                  this,
+                  uniquePendingIntentRequestCode,
+                  intent,
+                  PendingIntent.FLAG_ONE_SHOT or FLAG_MUTABLE
+                )
+              } else if (foreground) {
+                Log.d(TAG, "push receiver for notId $notId")
+
+                PendingIntent.getBroadcast(
+                  this,
+                  uniquePendingIntentRequestCode,
+                  intent,
+                  PendingIntent.FLAG_ONE_SHOT or FLAG_MUTABLE
+                )
+              } else {
+                // Only add on platform levels that support FLAG_MUTABLE
+                val flag: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE else PendingIntent.FLAG_UPDATE_CURRENT
+                if (getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S &&
+                  Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                  intent = Intent(this, OnNotificationReceiverActivity::class.java)
+                  updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
+                  pIntent = PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent, flag)
+                } else {
+                  intent = Intent(this, BackgroundActionButtonHandler::class.java)
+                  updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
+                  pIntent = PendingIntent.getBroadcast(this, uniquePendingIntentRequestCode, intent, flag)
+                }
+              }
+            }
+
+            foreground -> {
+              intent = Intent(this, PushHandlerActivity::class.java)
+              updateIntent(intent, callback, extras, foreground, notId)
+              pIntent = PendingIntent.getActivity(
+                this, uniquePendingIntentRequestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or FLAG_IMMUTABLE
+              )
+            }
+
+            else -> {
               intent = Intent(this, BackgroundActionButtonHandler::class.java)
-              updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
-              pIntent = PendingIntent.getBroadcast(this, uniquePendingIntentRequestCode, intent, flag)
+              updateIntent(intent, callback, extras, foreground, notId)
+              pIntent = PendingIntent.getBroadcast(
+                this, uniquePendingIntentRequestCode,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or FLAG_IMMUTABLE
+              )
             }
           }
-          val actionBuilder: NotificationCompat.Action.Builder = Builder(
-              getImageId(resources, action.optString(PushConstants.ICON, ""), packageName), action.getString(PushConstants.TITLE), pIntent)
-          var remoteInput: RemoteInput? = null
+          val actionBuilder = NotificationCompat.Action.Builder(
+            getImageId(action.optString(PushConstants.ICON, "")),
+            action.getString(PushConstants.TITLE),
+            pIntent
+          )
+
+          var remoteInput: RemoteInput?
+
           if (inline) {
-            Log.d(LOG_TAG, "create remote input")
-            val replyLabel: String = action.optString(PushConstants.INLINE_REPLY_LABEL, "Enter your reply here")
-            remoteInput = Builder(PushConstants.INLINE_REPLY).setLabel(replyLabel).build()
+            Log.d(TAG, "Create Remote Input")
+
+            val replyLabel = action.optString(
+              PushConstants.INLINE_REPLY_LABEL,
+              "Enter your reply here"
+            )
+
+            remoteInput = RemoteInput.Builder(PushConstants.INLINE_REPLY)
+              .setLabel(replyLabel)
+              .build()
+
             actionBuilder.addRemoteInput(remoteInput)
           }
-          var wAction: NotificationCompat.Action? = actionBuilder.build()
+
+          val wAction: NotificationCompat.Action = actionBuilder.build()
           wActions.add(actionBuilder.build())
+
           if (inline) {
             mBuilder.addAction(wAction)
           } else {
-            mBuilder.addAction(getImageId(resources, action.optString(PushConstants.ICON, ""), packageName), action.getString(PushConstants.TITLE),
-                pIntent)
+            mBuilder.addAction(
+              getImageId(action.optString(PushConstants.ICON, "")),
+              action.getString(PushConstants.TITLE),
+              pIntent
+            )
           }
-          wAction = null
-          pIntent = null
         }
-        mBuilder.extend(WearableExtender().addActions(wActions))
+
+        mBuilder.extend(NotificationCompat.WearableExtender().addActions(wActions))
         wActions.clear()
       } catch (e: JSONException) {
         // nope
@@ -649,23 +963,26 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     }
   }
 
-  private fun setNotificationCount(context: Context, extras: Bundle?, mBuilder: NotificationCompat.Builder?) {
+  private fun setNotificationCount(extras: Bundle?, mBuilder: NotificationCompat.Builder) {
     val count = extractBadgeCount(extras)
     if (count >= 0) {
-      Log.d(LOG_TAG, "count =[$count]")
+      Log.d(TAG, "count =[$count]")
       mBuilder.setNumber(count)
     }
   }
 
-  private fun setVisibility(context: Context, extras: Bundle?, mBuilder: NotificationCompat.Builder?) {
-    val visibilityStr: String = extras.getString(PushConstants.VISIBILITY)
-    if (visibilityStr != null) {
+  private fun setVisibility(extras: Bundle?, mBuilder: NotificationCompat.Builder) {
+    extras?.getString(PushConstants.VISIBILITY)?.let { visibilityStr ->
       try {
-        val visibility: Integer = Integer.parseInt(visibilityStr)
-        if (visibility >= NotificationCompat.VISIBILITY_SECRET && visibility <= NotificationCompat.VISIBILITY_PUBLIC) {
-          mBuilder.setVisibility(visibility)
+        val visibilityInt = visibilityStr.toInt()
+
+        if (
+          visibilityInt >= NotificationCompat.VISIBILITY_SECRET
+          && visibilityInt <= NotificationCompat.VISIBILITY_PUBLIC
+        ) {
+          mBuilder.setVisibility(visibilityInt)
         } else {
-          Log.e(LOG_TAG, "Visibility parameter must be between -1 and 1")
+          Log.e(TAG, "Visibility parameter must be between -1 and 1")
         }
       } catch (e: NumberFormatException) {
         e.printStackTrace()
@@ -673,14 +990,23 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     }
   }
 
-  private fun setNotificationVibration(extras: Bundle?, vibrateOption: Boolean, mBuilder: NotificationCompat.Builder?) {
-    val vibrationPattern: String = extras.getString(PushConstants.VIBRATION_PATTERN)
+  private fun setNotificationVibration(
+    extras: Bundle?,
+    vibrateOption: Boolean,
+    mBuilder: NotificationCompat.Builder,
+  ) {
+    if (extras == null) {
+      Log.d(TAG, "setNotificationVibration: extras is null, skipping")
+      return
+    }
+
+    val vibrationPattern = extras.getString(PushConstants.VIBRATION_PATTERN)
     if (vibrationPattern != null) {
-      val items: Array<String> = vibrationPattern.replaceAll("\\[", "").replaceAll("\\]", "").split(",")
+      val items = convertToTypedArray(vibrationPattern)
       val results = LongArray(items.size)
       for (i in items.indices) {
         try {
-          results[i] = Long.parseLong(items[i].trim())
+          results[i] = items[i].trim { it <= ' ' }.toLong()
         } catch (nfe: NumberFormatException) {
         }
       }
@@ -692,119 +1018,170 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     }
   }
 
-  private fun setNotificationOngoing(extras: Bundle?, mBuilder: NotificationCompat.Builder?) {
-    val ongoing: Boolean = Boolean.parseBoolean(extras.getString(PushConstants.ONGOING, "false"))
-    mBuilder.setOngoing(ongoing)
-  }
-
-  private fun setNotificationMessage(notId: Int, extras: Bundle?, mBuilder: NotificationCompat.Builder?) {
-    val message: String = extras.getString(PushConstants.MESSAGE)
-    val style: String = extras.getString(PushConstants.STYLE, PushConstants.STYLE_TEXT)
-    if (PushConstants.STYLE_INBOX.equals(style)) {
-      setNotification(notId, message)
-      mBuilder.setContentText(fromHtml(message))
-      val messageList: ArrayList<String> = messageMap.get(notId)
-      val sizeList: Integer = messageList.size()
-      if (sizeList > 1) {
-        val sizeListMessage: String = sizeList.toString()
-        var stacking: String = sizeList.toString() + " more"
-        if (extras.getString(PushConstants.SUMMARY_TEXT) != null) {
-          stacking = extras.getString(PushConstants.SUMMARY_TEXT)
-          stacking = stacking.replace("%n%", sizeListMessage)
-        }
-        val notificationInbox: NotificationCompat.InboxStyle = InboxStyle()
-            .setBigContentTitle(fromHtml(extras.getString(PushConstants.TITLE))).setSummaryText(fromHtml(stacking))
-        for (i in messageList.size() - 1 downTo 0) {
-          notificationInbox.addLine(fromHtml(messageList.get(i)))
-        }
-        mBuilder.setStyle(notificationInbox)
-      } else {
-        val bigText: NotificationCompat.BigTextStyle = BigTextStyle()
-        if (message != null) {
-          bigText.bigText(fromHtml(message))
-          bigText.setBigContentTitle(fromHtml(extras.getString(PushConstants.TITLE)))
-          mBuilder.setStyle(bigText)
-        }
-      }
-    } else if (PushConstants.STYLE_PICTURE.equals(style)) {
-      setNotification(notId, "")
-      val bigPicture: NotificationCompat.BigPictureStyle = BigPictureStyle()
-      bigPicture.bigPicture(getBitmapFromURL(extras.getString(PushConstants.PICTURE)))
-      bigPicture.setBigContentTitle(fromHtml(extras.getString(PushConstants.TITLE)))
-      bigPicture.setSummaryText(fromHtml(extras.getString(PushConstants.SUMMARY_TEXT)))
-      mBuilder.setContentTitle(fromHtml(extras.getString(PushConstants.TITLE)))
-      mBuilder.setContentText(fromHtml(message))
-      mBuilder.setStyle(bigPicture)
-    } else {
-      setNotification(notId, "")
-      val bigText: NotificationCompat.BigTextStyle = BigTextStyle()
-      if (message != null) {
-        mBuilder.setContentText(fromHtml(message))
-        bigText.bigText(fromHtml(message))
-        bigText.setBigContentTitle(fromHtml(extras.getString(PushConstants.TITLE)))
-        val summaryText: String = extras.getString(PushConstants.SUMMARY_TEXT)
-        if (summaryText != null) {
-          bigText.setSummaryText(fromHtml(summaryText))
-        }
-        mBuilder.setStyle(bigText)
-      }
-      /*
-    else {
-      mBuilder.setContentText("<missing message content>");
-    }
-    */
+  private fun setNotificationOngoing(extras: Bundle?, mBuilder: NotificationCompat.Builder) {
+    extras?.getString(PushConstants.ONGOING, "false")?.let {
+      mBuilder.setOngoing(it.toBoolean())
     }
   }
 
-  private fun setNotificationSound(context: Context, extras: Bundle?, mBuilder: NotificationCompat.Builder?) {
-    var soundname: String = extras.getString(PushConstants.SOUNDNAME)
-    if (soundname == null) {
-      soundname = extras.getString(PushConstants.SOUND)
-    }
-    if (PushConstants.SOUND_RINGTONE.equals(soundname)) {
-      mBuilder.setSound(android.provider.Settings.System.DEFAULT_RINGTONE_URI)
-    } else if (soundname != null && !soundname.contentEquals(PushConstants.SOUND_DEFAULT)) {
-      val sound: Uri = Uri
-          .parse((ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.getPackageName()).toString() + "/raw/" + soundname)
-      Log.d(LOG_TAG, sound.toString())
-      mBuilder.setSound(sound)
-    } else {
-      mBuilder.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI)
-    }
-  }
+  private fun setNotificationMessage(
+    notId: Int,
+    extras: Bundle?,
+    mBuilder: NotificationCompat.Builder,
+  ) {
+    extras?.let {
+      val message = it.getString(PushConstants.MESSAGE)
 
-  private fun setNotificationLedColor(extras: Bundle?, mBuilder: NotificationCompat.Builder?) {
-    val ledColor: String = extras.getString(PushConstants.LED_COLOR)
-    if (ledColor != null) {
-      // Converts parse Int Array from ledColor
-      val items: Array<String> = ledColor.replaceAll("\\[", "").replaceAll("\\]", "").split(",")
-      val results = IntArray(items.size)
-      for (i in items.indices) {
-        try {
-          results[i] = Integer.parseInt(items[i].trim())
-        } catch (nfe: NumberFormatException) {
+      when (it.getString(PushConstants.STYLE, PushConstants.STYLE_TEXT)) {
+        PushConstants.STYLE_INBOX -> {
+          setNotification(notId, message)
+          mBuilder.setContentText(fromHtml(message))
+
+          messageMap[notId]?.let { messageList ->
+            val sizeList = messageList.size
+
+            if (sizeList > 1) {
+              val sizeListMessage = sizeList.toString()
+              var stacking: String? = "$sizeList more"
+
+              it.getString(PushConstants.SUMMARY_TEXT)?.let { summaryText ->
+                stacking = summaryText.replace("%n%", sizeListMessage)
+              }
+
+              val notificationInbox = NotificationCompat.InboxStyle().run {
+                setBigContentTitle(fromHtml(it.getString(PushConstants.TITLE)))
+                setSummaryText(fromHtml(stacking))
+              }.also { inbox ->
+                for (i in messageList.indices.reversed()) {
+                  inbox.addLine(fromHtml(messageList[i]))
+                }
+              }
+
+              mBuilder.setStyle(notificationInbox)
+            } else {
+              message?.let { message ->
+                val bigText = NotificationCompat.BigTextStyle().run {
+                  bigText(fromHtml(message))
+                  setBigContentTitle(fromHtml(it.getString(PushConstants.TITLE)))
+                }
+
+                mBuilder.setStyle(bigText)
+              }
+            }
+          }
         }
-      }
-      if (results.size == 4) {
-        mBuilder.setLights(Color.argb(results[0], results[1], results[2], results[3]), 500, 500)
-      } else {
-        Log.e(LOG_TAG, "ledColor parameter must be an array of length == 4 (ARGB)")
+
+        PushConstants.STYLE_PICTURE -> {
+          setNotification(notId, "")
+          val bigPicture = NotificationCompat.BigPictureStyle().run {
+            bigPicture(getBitmapFromURL(it.getString(PushConstants.PICTURE)))
+            setBigContentTitle(fromHtml(it.getString(PushConstants.TITLE)))
+            setSummaryText(fromHtml(it.getString(PushConstants.SUMMARY_TEXT)))
+          }
+
+          mBuilder.apply {
+            setContentTitle(fromHtml(it.getString(PushConstants.TITLE)))
+            setContentText(fromHtml(message))
+            setStyle(bigPicture)
+          }
+        }
+
+        else -> {
+          setNotification(notId, "")
+
+          message?.let { messageStr ->
+            val bigText = NotificationCompat.BigTextStyle().run {
+              bigText(fromHtml(messageStr))
+              setBigContentTitle(fromHtml(it.getString(PushConstants.TITLE)))
+
+              it.getString(PushConstants.SUMMARY_TEXT)?.let { summaryText ->
+                setSummaryText(fromHtml(summaryText))
+              }
+            }
+
+            mBuilder.setContentText(fromHtml(messageStr))
+            mBuilder.setStyle(bigText)
+          }
+        }
       }
     }
   }
 
-  private fun setNotificationPriority(extras: Bundle?, mBuilder: NotificationCompat.Builder?) {
-    val priorityStr: String = extras.getString(PushConstants.PRIORITY)
-    if (priorityStr != null) {
-      try {
-        val priority: Integer = Integer.parseInt(priorityStr)
-        if (priority >= NotificationCompat.PRIORITY_MIN && priority <= NotificationCompat.PRIORITY_MAX) {
-          mBuilder.setPriority(priority)
+  private fun setNotificationSound(extras: Bundle?, mBuilder: NotificationCompat.Builder) {
+    extras?.let {
+      val soundName = it.getString(PushConstants.SOUNDNAME) ?: it.getString(PushConstants.SOUND)
+
+      when {
+        soundName == PushConstants.SOUND_RINGTONE -> {
+          mBuilder.setSound(Settings.System.DEFAULT_RINGTONE_URI)
+        }
+
+        soundName != null && !soundName.contentEquals(PushConstants.SOUND_DEFAULT) -> {
+          val sound = Uri.parse(
+            "${ContentResolver.SCHEME_ANDROID_RESOURCE}://${context.packageName}/raw/$soundName"
+          )
+
+          Log.d(TAG, "Sound URL: $sound")
+
+          mBuilder.setSound(sound)
+        }
+
+        else -> {
+          mBuilder.setSound(Settings.System.DEFAULT_NOTIFICATION_URI)
+        }
+      }
+    }
+  }
+
+  private fun convertToTypedArray(item: String): Array<String> {
+    return item.replace("\\[".toRegex(), "")
+      .replace("]".toRegex(), "")
+      .split(",")
+      .toTypedArray()
+  }
+
+  private fun setNotificationLedColor(extras: Bundle?, mBuilder: NotificationCompat.Builder) {
+    extras?.let { it ->
+      it.getString(PushConstants.LED_COLOR)?.let { ledColor ->
+        // Convert ledColor to Int Typed Array
+        val items = convertToTypedArray(ledColor)
+        val results = IntArray(items.size)
+
+        for (i in items.indices) {
+          try {
+            results[i] = items[i].trim { it <= ' ' }.toInt()
+          } catch (nfe: NumberFormatException) {
+            Log.e(TAG, "Number Format Exception: $nfe")
+          }
+        }
+
+        if (results.size == 4) {
+          val (alpha, red, green, blue) = results
+          mBuilder.setLights(Color.argb(alpha, red, green, blue), 500, 500)
         } else {
-          Log.e(LOG_TAG, "Priority parameter must be between -2 and 2")
+          Log.e(TAG, "ledColor parameter must be an array of length == 4 (ARGB)")
         }
-      } catch (e: NumberFormatException) {
-        e.printStackTrace()
+      }
+    }
+  }
+
+  private fun setNotificationPriority(extras: Bundle?, mBuilder: NotificationCompat.Builder) {
+    extras?.let { it ->
+      it.getString(PushConstants.PRIORITY)?.let { priorityStr ->
+        try {
+          val priority = priorityStr.toInt()
+
+          if (
+            priority >= NotificationCompat.PRIORITY_MIN
+            && priority <= NotificationCompat.PRIORITY_MAX
+          ) {
+            mBuilder.priority = priority
+          } else {
+            Log.e(TAG, "Priority parameter must be between -2 and 2")
+          }
+        } catch (e: NumberFormatException) {
+          e.printStackTrace()
+        }
       }
     }
   }
@@ -813,121 +1190,165 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     if (bitmap == null) {
       return null
     }
-    val output: Bitmap = Bitmap.createBitmap(bitmap.getWidth(), bitmap.getHeight(), Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(output)
-    val color: Int = Color.RED
-    val paint = Paint()
-    val rect = Rect(0, 0, bitmap.getWidth(), bitmap.getHeight())
-    val rectF = RectF(rect)
-    paint.setAntiAlias(true)
-    canvas.drawARGB(0, 0, 0, 0)
-    paint.setColor(color)
-    val cx: Float = bitmap.getWidth() / 2
-    val cy: Float = bitmap.getHeight() / 2
-    val radius = if (cx < cy) cx else cy
-    canvas.drawCircle(cx, cy, radius, paint)
-    paint.setXfermode(PorterDuffXfermode(PorterDuff.Mode.SRC_IN))
-    canvas.drawBitmap(bitmap, rect, rect, paint)
+
+    val output = Bitmap.createBitmap(
+      bitmap.width,
+      bitmap.height,
+      Bitmap.Config.ARGB_8888
+    )
+
+    val paint = Paint().apply {
+      isAntiAlias = true
+      color = Color.RED
+      xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+    }
+
+    Canvas(output).apply {
+      drawARGB(0, 0, 0, 0)
+
+      val cx = (bitmap.width / 2).toFloat()
+      val cy = (bitmap.height / 2).toFloat()
+      val radius = if (cx < cy) cx else cy
+      val rect = Rect(0, 0, bitmap.width, bitmap.height)
+
+      drawCircle(cx, cy, radius, paint)
+      drawBitmap(bitmap, rect, rect, paint)
+    }
+
     bitmap.recycle()
     return output
   }
 
-  private fun setNotificationLargeIcon(extras: Bundle?, packageName: String, resources: Resources,
-                     mBuilder: NotificationCompat.Builder?) {
-    val gcmLargeIcon: String = extras.getString(PushConstants.IMAGE) // from gcm
-    val imageType: String = extras.getString(PushConstants.IMAGE_TYPE, PushConstants.IMAGE_TYPE_SQUARE)
-    if (gcmLargeIcon != null && !"".equals(gcmLargeIcon)) {
-      if (gcmLargeIcon.startsWith("http://") || gcmLargeIcon.startsWith("https://")) {
-        val bitmap: Bitmap? = getBitmapFromURL(gcmLargeIcon)
-        if (PushConstants.IMAGE_TYPE_SQUARE.equalsIgnoreCase(imageType)) {
-          mBuilder.setLargeIcon(bitmap)
-        } else {
-          val bm: Bitmap? = getCircleBitmap(bitmap)
-          mBuilder.setLargeIcon(bm)
-        }
-        Log.d(LOG_TAG, "using remote large-icon from gcm")
-      } else {
-        val assetManager: AssetManager = getAssets()
-        val istr: InputStream
-        try {
-          istr = assetManager.open(gcmLargeIcon)
-          val bitmap: Bitmap = BitmapFactory.decodeStream(istr)
-          if (PushConstants.IMAGE_TYPE_SQUARE.equalsIgnoreCase(imageType)) {
+  private fun setNotificationLargeIcon(
+    extras: Bundle?,
+    mBuilder: NotificationCompat.Builder,
+  ) {
+    extras?.let {
+      val gcmLargeIcon = it.getString(PushConstants.IMAGE)
+      val imageType = it.getString(PushConstants.IMAGE_TYPE, PushConstants.IMAGE_TYPE_SQUARE)
+
+      if (gcmLargeIcon != null && gcmLargeIcon != "") {
+        if (
+          gcmLargeIcon.startsWith("http://")
+          || gcmLargeIcon.startsWith("https://")
+        ) {
+          val bitmap = getBitmapFromURL(gcmLargeIcon)
+
+          if (PushConstants.IMAGE_TYPE_SQUARE.equals(imageType, ignoreCase = true)) {
             mBuilder.setLargeIcon(bitmap)
           } else {
-            val bm: Bitmap? = getCircleBitmap(bitmap)
+            val bm = getCircleBitmap(bitmap)
             mBuilder.setLargeIcon(bm)
           }
-          Log.d(LOG_TAG, "using assets large-icon from gcm")
-        } catch (e: IOException) {
-          var largeIconId = 0
-          largeIconId = getImageId(resources, gcmLargeIcon, packageName)
-          if (largeIconId != 0) {
-            val largeIconBitmap: Bitmap = BitmapFactory.decodeResource(resources, largeIconId)
-            mBuilder.setLargeIcon(largeIconBitmap)
-            Log.d(LOG_TAG, "using resources large-icon from gcm")
-          } else {
-            Log.d(LOG_TAG, "Not setting large icon")
+
+          Log.d(TAG, "Using remote large-icon from GCM")
+        } else {
+          try {
+            val inputStream: InputStream = assets.open(gcmLargeIcon)
+
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+
+            if (PushConstants.IMAGE_TYPE_SQUARE.equals(imageType, ignoreCase = true)) {
+              mBuilder.setLargeIcon(bitmap)
+            } else {
+              val bm = getCircleBitmap(bitmap)
+              mBuilder.setLargeIcon(bm)
+            }
+
+            Log.d(TAG, "Using assets large-icon from GCM")
+          } catch (e: IOException) {
+            val largeIconId: Int = getImageId(gcmLargeIcon)
+
+            if (largeIconId != 0) {
+              val largeIconBitmap = BitmapFactory.decodeResource(context.resources, largeIconId)
+              mBuilder.setLargeIcon(largeIconBitmap)
+              Log.d(TAG, "Using resources large-icon from GCM")
+            } else {
+              Log.d(TAG, "Not large icon settings")
+            }
           }
         }
       }
     }
   }
 
-  private fun getImageId(resources: Resources, icon: String, packageName: String): Int {
-    var iconId: Int = resources.getIdentifier(icon, PushConstants.DRAWABLE, packageName)
+  private fun getImageId(icon: String): Int {
+    var iconId = context.resources.getIdentifier(icon, PushConstants.DRAWABLE, context.packageName)
     if (iconId == 0) {
-      iconId = resources.getIdentifier(icon, "mipmap", packageName)
+      iconId = context.resources.getIdentifier(icon, "mipmap", context.packageName)
     }
     return iconId
   }
 
-  private fun setNotificationSmallIcon(context: Context, extras: Bundle?, packageName: String, resources: Resources,
-                     mBuilder: NotificationCompat.Builder?, localIcon: String?) {
-    var iconId = 0
-    val icon: String = extras.getString(PushConstants.ICON)
-    if (icon != null && !"".equals(icon)) {
-      iconId = getImageId(resources, icon, packageName)
-      Log.d(LOG_TAG, "using icon from plugin options")
-    } else if (localIcon != null && !"".equals(localIcon)) {
-      iconId = getImageId(resources, localIcon, packageName)
-      Log.d(LOG_TAG, "using icon from plugin options")
+  private fun setNotificationSmallIcon(
+    extras: Bundle?,
+    mBuilder: NotificationCompat.Builder,
+    localIcon: String?,
+  ) {
+    extras?.let {
+      val icon = it.getString(PushConstants.ICON)
+
+      val iconId = when {
+        icon != null && icon != "" -> {
+          getImageId(icon)
+        }
+
+        localIcon != null && localIcon != "" -> {
+          getImageId(localIcon)
+        }
+
+        else -> {
+          Log.d(TAG, "No icon resource found from settings, using application icon")
+          context.applicationInfo.icon
+        }
+      }
+
+      mBuilder.setSmallIcon(iconId)
     }
-    if (iconId == 0) {
-      Log.d(LOG_TAG, "no icon resource found - using application icon")
-      iconId = context.getApplicationInfo().icon
-    }
-    mBuilder.setSmallIcon(iconId)
   }
 
-  private fun setNotificationIconColor(color: String?, mBuilder: NotificationCompat.Builder?, localIconColor: String?) {
-    var iconColor = 0
-    if (color != null && !"".equals(color)) {
-      try {
-        iconColor = Color.parseColor(color)
-      } catch (e: IllegalArgumentException) {
-        Log.e(LOG_TAG, "couldn't parse color from android options")
+  private fun setNotificationIconColor(
+    color: String?,
+    mBuilder: NotificationCompat.Builder,
+    localIconColor: String?,
+  ) {
+    val iconColor = when {
+      color != null && color != "" -> {
+        try {
+          Color.parseColor(color)
+        } catch (e: IllegalArgumentException) {
+          Log.e(TAG, "Couldn't parse color from Android options")
+        }
       }
-    } else if (localIconColor != null && !"".equals(localIconColor)) {
-      try {
-        iconColor = Color.parseColor(localIconColor)
-      } catch (e: IllegalArgumentException) {
-        Log.e(LOG_TAG, "couldn't parse color from android options")
+
+      localIconColor != null && localIconColor != "" -> {
+        try {
+          Color.parseColor(localIconColor)
+        } catch (e: IllegalArgumentException) {
+          Log.e(TAG, "Couldn't parse color from android options")
+        }
+      }
+
+      else -> {
+        Log.d(TAG, "No icon color settings found")
+        0
       }
     }
+
     if (iconColor != 0) {
-      mBuilder.setColor(iconColor)
+      mBuilder.color = iconColor
     }
   }
 
-  fun getBitmapFromURL(strURL: String?): Bitmap? {
+  private fun getBitmapFromURL(strURL: String?): Bitmap? {
     return try {
       val url = URL(strURL)
-      val connection: HttpURLConnection = url.openConnection() as HttpURLConnection
-      connection.setConnectTimeout(15000)
-      connection.setDoInput(true)
-      connection.connect()
-      val input: InputStream = connection.getInputStream()
+      val connection = (url.openConnection() as HttpURLConnection).apply {
+        connectTimeout = 15000
+        doInput = true
+        connect()
+      }
+      val input = connection.inputStream
       BitmapFactory.decodeStream(input)
     } catch (e: IOException) {
       e.printStackTrace()
@@ -935,41 +1356,27 @@ class FCMService : FirebaseMessagingService(), PushConstants {
     }
   }
 
-  private fun parseInt(value: String, extras: Bundle?): Int {
-    var retval = 0
+  private fun parseNotificationIdToInt(extras: Bundle?): Int {
+    var returnVal = 0
+
     try {
-      retval = Integer.parseInt(extras.getString(value))
+      returnVal = extras!!.getString(PushConstants.NOT_ID)!!.toInt()
     } catch (e: NumberFormatException) {
-      Log.e(LOG_TAG, "Number format exception - Error parsing " + value + ": " + e.getMessage())
+      Log.e(TAG, "NumberFormatException occurred: ${PushConstants.NOT_ID}: ${e.message}")
     } catch (e: Exception) {
-      Log.e(LOG_TAG, "Number format exception - Error parsing " + value + ": " + e.getMessage())
+      Log.e(TAG, "Exception occurred when parsing ${PushConstants.NOT_ID}: ${e.message}")
     }
-    return retval
+
+    return returnVal
   }
 
   private fun fromHtml(source: String?): Spanned? {
-    return if (source != null) Html.fromHtml(source) else null
+    return if (source != null) HtmlCompat.fromHtml(source, HtmlCompat.FROM_HTML_MODE_LEGACY) else null
   }
 
-  private fun isAvailableSender(from: String): Boolean {
-    val sharedPref: SharedPreferences = getApplicationContext().getSharedPreferences(PushPlugin.COM_ADOBE_PHONEGAP_PUSH,
-        Context.MODE_PRIVATE)
-    val savedSenderID: String = sharedPref.getString(PushConstants.SENDER_ID, "")
-    Log.d(LOG_TAG, "sender id = $savedSenderID")
-    return from.equals(savedSenderID) || from.startsWith("/topics/")
-  }
-
-  companion object {
-    private const val LOG_TAG = "Push_FCMService"
-    private val messageMap: HashMap<Integer, ArrayList<String>> = HashMap<Integer, ArrayList<String>>()
-
-    // VoIP
-    private const val CHANNEL_VOIP = "Voip"
-    private const val CHANNEL_NAME = "TCVoip"
-    const val VOIP_NOTIFICATION_ID = 168697
-    fun getAppName(context: Context): String {
-      val appName: CharSequence = context.getPackageManager().getApplicationLabel(context.getApplicationInfo())
-      return appName as String
-    }
+  private fun isAvailableSender(from: String?): Boolean {
+    val savedSenderID = pushSharedPref.getString(PushConstants.SENDER_ID, "")
+    Log.d(TAG, "sender id = $savedSenderID")
+    return from == savedSenderID || from!!.startsWith("/topics/")
   }
 }
