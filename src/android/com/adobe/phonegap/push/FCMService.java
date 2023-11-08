@@ -267,8 +267,9 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
 
                     // Handle action
                     dismissVOIPNotification();
-                    String voipStatus = intent.getAction();
+
                     // Update Webhook status to CONNECTED
+                    String voipStatus = intent.getAction();
                     updateWebhookVOIPStatus(callbackUrl, callId, voipStatus);
 
                     // Start cordova activity on answer
@@ -732,6 +733,7 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
                     Intent intent = null;
                     PendingIntent pIntent = null;
                     if (inline) {
+
                         Log.d(LOG_TAG, "Version: " + android.os.Build.VERSION.SDK_INT + " = " + android.os.Build.VERSION_CODES.M);
                         if (android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.M) {
                             Log.d(LOG_TAG, "push activity");
@@ -758,10 +760,24 @@ public class FCMService extends FirebaseMessagingService implements PushConstant
                         pIntent = PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent,
                                 PendingIntent.FLAG_UPDATE_CURRENT);
                     } else {
-                        intent = new Intent(this, BackgroundActionButtonHandler.class);
-                        updateIntent(intent, action.getString(CALLBACK), extras, foreground, notId);
-                        pIntent = PendingIntent.getBroadcast(this, uniquePendingIntentRequestCode, intent,
-                                PendingIntent.FLAG_UPDATE_CURRENT);
+                                
+                         // Only add on platform levels that support FLAG_MUTABLE
+                        final int flag = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? 
+                            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE : 
+                                PendingIntent.FLAG_UPDATE_CURRENT; 
+
+                        if (
+                            getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S && 
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                        ) {
+                            intent = new Intent(this, OnNotificationReceiverActivity.class);
+                            updateIntent(intent, action.getString(CALLBACK), extras, foreground, notId);
+                            pIntent = PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent, flag);
+                        } else {
+                            intent = new Intent(this, BackgroundActionButtonHandler.class);
+                            updateIntent(intent, action.getString(CALLBACK), extras, foreground, notId);
+                            pIntent = PendingIntent.getBroadcast(this, uniquePendingIntentRequestCode, intent, flag);
+                        }    
                     }
 
                     NotificationCompat.Action.Builder actionBuilder = new NotificationCompat.Action.Builder(
