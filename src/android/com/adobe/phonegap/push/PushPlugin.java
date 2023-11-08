@@ -647,6 +647,10 @@ public class PushPlugin extends CordovaPlugin implements PushConstants {
     return gForeground;
   }
 
+  public static boolean isInBackground() {
+    return !gForeground;
+  }
+
   public static boolean isActive() {
     return gWebView != null;
   }
