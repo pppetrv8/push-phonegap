@@ -1,7 +1,9 @@
 package com.adobe.phonegap.push
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -20,6 +22,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.text.Spanned
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
@@ -119,7 +122,7 @@ class FCMService : FirebaseMessagingService() {
       messageMap[notId] = messageList
     }
 
-    if (message == null || message.isEmpty()) {
+    if (message.isNullOrEmpty()) {
       messageList.clear()
     } else {
       messageList.add(message)
@@ -159,12 +162,12 @@ class FCMService : FirebaseMessagingService() {
         setApplicationIconBadgeNumber(context, 0)
       }
 
-      if ("true".equals(message.getData().get("voip"))) {
-        if ("true".equals(message.getData().get("isCancelPush"))) {
+      if ("true" == message.data["voip"]) {
+        if ("true" == message.data["isCancelPush"]) {
           dismissVOIPNotification()
-          IncomingCallActivity.dismissUnlockScreenNotification(this.getApplicationContext())
+          IncomingCallActivity.dismissUnlockScreenNotification(this.applicationContext)
         } else {
-          showVOIPNotification(message.getData())
+          showVOIPNotification(message.data)
         }
       } else {
         // Foreground
@@ -190,9 +193,10 @@ class FCMService : FirebaseMessagingService() {
   }
 
   // VoIP implementation
-  private fun intentForLaunchActivity(): Intent {
-    val pm: PackageManager = getPackageManager()
-    return pm.getLaunchIntentForPackage(getApplicationContext().getPackageName())
+  private fun intentForLaunchActivity(): Intent? {
+      val pm = packageManager
+      val packageName = applicationContext.packageName
+      return pm?.getLaunchIntentForPackage(packageName)
   }
 
   private fun defaultRingtoneUri(): Uri {
@@ -205,10 +209,10 @@ class FCMService : FirebaseMessagingService() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val importance: Int = NotificationManager.IMPORTANCE_HIGH
       val channel = NotificationChannel(CHANNEL_VOIP, CHANNEL_NAME, importance)
-      channel.setDescription("Channel For VOIP Calls")
+        channel.description = "Channel For VOIP Calls"
 
       // Set ringtone to notification (>= Android O)
-      val audioAttributes: AudioAttributes = Builder()
+      val audioAttributes = AudioAttributes.Builder()
         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
         .setUsage(AudioAttributes.USAGE_NOTIFICATION)
         .build()
@@ -254,34 +258,43 @@ class FCMService : FirebaseMessagingService() {
     // Intent for tapping on Reject
     val declineIntent = Intent(IncomingCallActivity.VOIP_DECLINE)
     val declinePendingIntent: PendingIntent = PendingIntent.getBroadcast(this, 20, declineIntent, PendingIntent.FLAG_IMMUTABLE)
-    val notificationBuilder: NotificationCompat.Builder = Builder(this, CHANNEL_VOIP)
-      .setSmallIcon(getResources().getIdentifier("pushicon", "drawable", getPackageName()))
+    val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_VOIP)
+      .setSmallIcon(resources.getIdentifier("pushicon", "drawable", packageName))
       .setContentTitle(title)
       .setContentText(caller)
       .setPriority(NotificationCompat.PRIORITY_HIGH)
       .setCategory(NotificationCompat.CATEGORY_CALL) // Show main activity on lock screen or when tapping on notification
       .setFullScreenIntent(fullScreenPendingIntent, true) // Show Accept button
-      .addAction(Action(0, "Annehmen",
-        acceptPendingIntent)) // Show decline action
-      .addAction(Action(0, "Ablehnen",
-        declinePendingIntent)) // Make notification dismiss on user input action
+      .addAction(NotificationCompat.Action(0, "Annehmen", acceptPendingIntent)) // Show decline action
+      .addAction(NotificationCompat.Action(0, "Ablehnen", declinePendingIntent)) // Make notification dismiss on user input action
       .setAutoCancel(true) // Cannot be swiped by user
       .setOngoing(true) // Set ringtone to notification (< Android O)
       .setSound(defaultRingtoneUri())
     val incomingCallNotification: Notification = notificationBuilder.build()
-    val notificationManager: NotificationManagerCompat = NotificationManagerCompat.from(this)
+    val notificationManager = NotificationManagerCompat.from(this)
     // Display notification
-    notificationManager.notify(VOIP_NOTIFICATION_ID, incomingCallNotification)
+      if (ActivityCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+          != PackageManager.PERMISSION_GRANTED
+      ) {
+          // TODO: Consider calling
+          //    ActivityCompat#requestPermissions
+          // here to request the missing permissions, and then overriding
+          //   public void onRequestPermissionsResult(int requestCode, String[] permissions,
+          //                                          int[] grantResults)
+          // to handle the case where the user grants the permission. See the documentation
+          // for ActivityCompat#requestPermissions for more details.
+          return
+      }
+      notificationManager.notify(VOIP_NOTIFICATION_ID, incomingCallNotification)
 
     // Add broadcast receiver for notification button actions
     if (voipNotificationActionBR == null) {
       val filter = IntentFilter()
       filter.addAction(IncomingCallActivity.VOIP_ACCEPT)
       filter.addAction(IncomingCallActivity.VOIP_DECLINE)
-      val appContext: Context = this.getApplicationContext()
+      val appContext: Context = this.applicationContext
       voipNotificationActionBR = object : BroadcastReceiver() {
-        @Override
-        fun onReceive(context: Context?, intent: Intent) {
+        override fun onReceive(context: Context?, intent: Intent) {
           // Remove BR after responding to notification action
           appContext.unregisterReceiver(voipNotificationActionBR)
           voipNotificationActionBR = null
@@ -290,11 +303,11 @@ class FCMService : FirebaseMessagingService() {
           dismissVOIPNotification()
 
           // Update Webhook status to CONNECTED
-          val voipStatus: String = intent.getAction()
+          val voipStatus = intent.action ?: ""
           updateWebhookVOIPStatus(callbackUrl, callId, voipStatus)
 
           // Start cordova activity on answer
-          if (voipStatus.equals(IncomingCallActivity.VOIP_ACCEPT)) {
+          if (voipStatus == IncomingCallActivity.VOIP_ACCEPT) {
             startActivity(intentForLaunchActivity())
           }
         }
@@ -305,28 +318,23 @@ class FCMService : FirebaseMessagingService() {
 
   private fun dismissVOIPNotification() {
     NotificationManagerCompat.from(this).cancel(VOIP_NOTIFICATION_ID)
-    if (IncomingCallActivity.instance != null) {
-      IncomingCallActivity.instance.finish()
-    }
+    IncomingCallActivity.instance?.finish()
   }
 
   fun updateWebhookVOIPStatus(url: String?, callId: String?, status: String) {
     val client = OkHttpClient()
-    val urlBuilder: HttpUrl.Builder = HttpUrl.parse(url).newBuilder()
-    urlBuilder.addQueryParameter("id", callId)
-    urlBuilder.addQueryParameter("input", status)
-    val urlBuilt: String = urlBuilder.build().toString()
-    val request: Request = Builder().url(urlBuilt).build()
+    val urlBuilder = HttpUrl.parse(url)?.newBuilder()
+    urlBuilder?.addQueryParameter("id", callId)
+    urlBuilder?.addQueryParameter("input", status)
+    val urlBuilt: String = urlBuilder?.build().toString()
+    val request = Request.Builder().url(urlBuilt).build()
     client.newCall(request)
-      .enqueue(object : Callback() {
-        @Override
-        fun onFailure(call: Call?, e: IOException?) {
-          Log.d(LOG_TAG, "Update For CallId $callId and Status $status failed")
+      .enqueue(object : Callback {
+        override fun onFailure(call: Call?, e: IOException?) {
+          Log.d("", "Update For CallId $callId and Status $status failed")
         }
-
-        @Override
-        fun onResponse(call: Call?, response: Response?) {
-          Log.d(LOG_TAG, "Update For CallId $callId and Status $status successful")
+        override fun onResponse(call: Call?, response: Response?) {
+          Log.d("", "Update For CallId $callId and Status $status successful")
         }
       })
   }
@@ -593,8 +601,8 @@ class FCMService : FirebaseMessagingService() {
       Log.d(TAG, "forceStart=$forceStart")
       Log.d(TAG, "badgeCount=$badgeCount")
 
-      val hasMessage = message != null && message.isNotEmpty()
-      val hasTitle = title != null && title.isNotEmpty()
+      val hasMessage = !message.isNullOrEmpty()
+      val hasTitle = !title.isNullOrEmpty()
 
       if (hasMessage || hasTitle) {
         Log.d(TAG, "Create Notification")
@@ -875,7 +883,6 @@ class FCMService : FirebaseMessagingService() {
                 )
               } else if (foreground) {
                 Log.d(TAG, "push receiver for notId $notId")
-
                 PendingIntent.getBroadcast(
                   this,
                   uniquePendingIntentRequestCode,
@@ -885,15 +892,15 @@ class FCMService : FirebaseMessagingService() {
               } else {
                 // Only add on platform levels that support FLAG_MUTABLE
                 val flag: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE else PendingIntent.FLAG_UPDATE_CURRENT
-                if (getApplicationInfo().targetSdkVersion >= Build.VERSION_CODES.S &&
+                if (applicationInfo.targetSdkVersion >= Build.VERSION_CODES.S &&
                   Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                   intent = Intent(this, OnNotificationReceiverActivity::class.java)
                   updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
-                  pIntent = PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent, flag)
+                  PendingIntent.getActivity(this, uniquePendingIntentRequestCode, intent, flag)
                 } else {
                   intent = Intent(this, BackgroundActionButtonHandler::class.java)
                   updateIntent(intent, action.getString(PushConstants.CALLBACK), extras, foreground, notId)
-                  pIntent = PendingIntent.getBroadcast(this, uniquePendingIntentRequestCode, intent, flag)
+                  PendingIntent.getBroadcast(this, uniquePendingIntentRequestCode, intent, flag)
                 }
               }
             }
