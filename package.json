@@ -11,7 +11,7 @@
     "precommit-msg": "echo 'Pre-commit checks...' && exit 0",
     "test": "npm run build && npm run lint && npm run jasmine"
   },
-  "repository": "/Users/pavel/projects/trusted-care/phonegap-plugin-push",
+  "repository": "github:havesource/cordova-plugin-push",
   "keywords": [
     "ecosystem:cordova",
     "cordova-ios",
